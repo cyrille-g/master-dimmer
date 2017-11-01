@@ -29,9 +29,9 @@ This is my first github project and more an experiment than something else, so p
 The code was first based on @corbanmailloux work (https://github.com/corbanmailloux/esp-mqtt-rgb-led), but i only kept the wifi part in the end.
 
 TODO:
-Apply coding rules
-Add light sensor code (sensor connected on the analog input)
-Add ntp clock usage
-Add pattern code 
-update JSON commands for other lamps
+- Apply coding rules
+- Add light sensor code (sensor connected on the analog input)
+- Add ntp clock usage
+- Add pattern code 
+- update JSON commands for other lamps
 
