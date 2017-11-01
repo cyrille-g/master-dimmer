@@ -97,3 +97,4 @@ bool startFadeOff = false;
 int transitionTimeMs = 0;
 int transitionPreset = MANUAL;
 int gOnboardLedState = HIGH;
+
