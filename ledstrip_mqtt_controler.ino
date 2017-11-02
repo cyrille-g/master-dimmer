@@ -1,5 +1,5 @@
 /*
-  Thanks much to @corbanmailloux for providing a great framework for implementing flash/fade with HomeAssistant https://github.com/corbanmailloux/esp-mqtt-rgb-led
+  The code was first based on @corbanmailloux work ( https://github.com/corbanmailloux/esp-mqtt-rgb-led ), now only the wireless and OTA part remains.
   
   To use this code you will need the following dependancies: 
   
@@ -37,6 +37,8 @@ void setup() {
   // serial
   Serial.begin(115200);
 
+  //wifi not starting fix, TBC
+  WiFi.mode(WIFI_OFF);
 // set all pins to output mode and state low
   pinMode(D0,OUTPUT);
   analogWrite(D0,0);
@@ -86,13 +88,16 @@ void setup() {
  else if (serialMode) {
   Serial.println("Serial Mode engaged"); 
  } else {
-  // wifi
+  
+   // wifi setup
   setup_wifi();
+   
+  // MQTT setup
   Serial.println("Wifi connected, reaching for MQTT server"); 
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(lightCommandCallback);
 
-  //OTA SETUP
+  //OTA setup
   ArduinoOTA.setPort(OTAPORT);
   // Hostname defaults to esp8266-[ChipID]
   ArduinoOTA.setHostname(SENSORNAME);
@@ -101,7 +106,7 @@ void setup() {
   ArduinoOTA.setPassword(OTAPASSWORD);
 
   ArduinoOTA.onStart([]() {
-    Serial.println("Starting");
+    Serial.println("Starting OTA");
   });
   ArduinoOTA.onEnd([]() {
     Serial.println("\nEnd");
@@ -122,7 +127,6 @@ void setup() {
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
   }
-  currentBrightness = 0;
 }
 
 
@@ -137,9 +141,11 @@ void setup_wifi(void) {
  
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+  delay(50);
   wl_status_t retCon = WiFi.status() ;
   
   while (retCon != WL_CONNECTED) {
+    WiFi.printDiag(Serial);
     Serial.print("Wifi status: ");
     switch (retCon) {
       case  WL_CONNECTED: Serial.println(" WL_CONNECTED"); break;
