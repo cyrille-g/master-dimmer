@@ -18,15 +18,16 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include "settings.h"
+#include "globalVars.h"
 
 /******************************** TOGGLE ONBOARD LED ***********************************/
-void toggleOnboardLed(void)
-{
-  if (gOnboardLedState == HIGH)
+void toggleOnboardLed(void) {
+  if (gOnboardLedState == HIGH) {
     gOnboardLedState = LOW;
-  else
+  } else {
     gOnboardLedState = HIGH;
-    digitalWrite(LED_CARTE, gOnboardLedState); // Turn off the on-board LED
+  }
+  digitalWrite(LED_CARTE, gOnboardLedState); // Turn off the on-board LED
 }
 
 
@@ -37,7 +38,7 @@ void setup() {
   // serial
   Serial.begin(115200);
 
-  //wifi not starting fix, TBC
+  //wifi not starting fix
   WiFi.mode(WIFI_OFF);
 // set all pins to output mode and state low
   pinMode(D0,OUTPUT);
@@ -62,19 +63,23 @@ void setup() {
   // onboard led
   pinMode(LED_CARTE, OUTPUT);
   toggleOnboardLed();
+
+  // scenario queue
+  STAILQ_INIT(&transitionQueue);
+  
   byte received= 0;
   int i=0;
   Serial.println("Press S for serial mode, T for test mode");
   delay(500);
-  for(i=0;(i<10) && (!serialMode);i++) {
+  for(i=0;(i<10) && (!gSerialMode);i++) {
     while (Serial.available()) {
       received = Serial.read();
       if (received == 'S') {
-        serialMode = true;
+        gSerialMode = true;
         break;
       } else if (received == 'T') {
-        serialMode = true;
-        specialSerialMode = true;
+        gSerialMode = true;
+        gSpecialSerialMode = true;
         break;
       }
     }
@@ -82,10 +87,10 @@ void setup() {
     delay(500);      
   }
 
- if (specialSerialMode) {
+ if (gSpecialSerialMode) {
   Serial.println("Special Serial Mode engaged"); 
  }
- else if (serialMode) {
+ else if (gSerialMode) {
   Serial.println("Serial Mode engaged"); 
  } else {
   
@@ -94,12 +99,12 @@ void setup() {
    
   // MQTT setup
   Serial.println("Wifi connected, reaching for MQTT server"); 
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(lightCommandCallback);
+  gMqttClient.setServer(gConfMqttServerIp, gConfMqttPort);
+  gMqttClient.setCallback(lightCommandCallback);
 
   //OTA setup
   ArduinoOTA.setPort(OTAPORT);
-  // Hostname defaults to esp8266-[ChipID]
+  // Hostname defaults to esp8266-[ChgConfIpAddressID]
   ArduinoOTA.setHostname(SENSORNAME);
 
   // No authentication by default
@@ -137,10 +142,10 @@ void setup_wifi(void) {
   // We start by connecting to a WiFi network
   Serial.println();
   Serial.print("Connecting to ");
-  Serial.println(ssid);
+  Serial.println(gConfSsid);
  
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  WiFi.begin(gConfSsid, gConfPassword);
   delay(50);
   wl_status_t retCon = WiFi.status() ;
   
@@ -221,11 +226,54 @@ void lightCommandCallback(const char* topic, byte* payload, unsigned int length)
   sendState();
 }
 
+/****************** scenario builder from JSON *******************************************/
+void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs, uint8_t transitionPreset) {
 
+  Serial.print("Scenario fading from ");
+  Serial.print(gCurrentBrightness,DEC);
+  Serial.print(" to ");
+  Serial.print(targetBrightness,DEC);
+  Serial.print(" in ");
+  Serial.print(transitionTimeMs,DEC);
+  Serial.print(" ms with preset: ");
+  Serial.println(transitionPreset, DEC);
 
-/********************************** START PROCESS JSON*****************************************/
+  
+  // TODO 
+  // right now the preset is not used. Code it when time and light sensor is available
+
+  
+  // we want the max stepCount we can, so it depends wether transition time 
+  // or brightness count is higher. 
+  // we might want to set a minimum delay or minimum brightness step
+  // so account for that
+  transitionQueueElem_t *pTransition = (transitionQueueElem_t *)malloc(sizeof(transitionQueueElem_t));
+  
+  if ((abs(targetBrightness - gCurrentBrightness) / MIN_STEP_BRIGHTNESS) > (transitionTimeMs / MIN_STEP_DELAY)) {
+  //we can do more than 1 brightness step per delay step ms. set stepDelay to that time
+    pTransition->stepDelay = MIN_STEP_DELAY;
+    pTransition->stepCount = transitionTimeMs / pTransition->stepDelay;
+    pTransition->stepBrightness = (targetBrightness - gCurrentBrightness) / pTransition->stepCount;
+  } else {
+  //we cannot. brightness difference is the limiting factor.
+    pTransition->stepCount = abs(targetBrightness - gCurrentBrightness) / MIN_STEP_BRIGHTNESS;
+    pTransition->stepDelay = transitionTimeMs / pTransition->stepCount ;
+    pTransition->stepBrightness = (targetBrightness > gCurrentBrightness)?MIN_STEP_BRIGHTNESS:-MIN_STEP_BRIGHTNESS;
+  }
+
+  STAILQ_INSERT_HEAD(&transitionQueue,pTransition,transitionEntry);
+
+  Serial.print("delay step ");
+  Serial.print(pTransition->stepDelay,DEC);
+  Serial.print(", step count ");
+  Serial.print(pTransition->stepCount,DEC);
+  Serial.print(", brightness step ");
+  Serial.println(pTransition->stepBrightness,DEC);
+}
+
+/********************************** JSON PROCESSOR *****************************************/
 bool processJson(char* message) {
-  StaticJsonBuffer<BUFFER_SIZE> jsonBuffer;
+  StaticJsonBuffer<JSON_BUFFER_SIZE> jsonBuffer;
 
   JsonObject& root = jsonBuffer.parseObject(message);
 
@@ -233,22 +281,29 @@ bool processJson(char* message) {
     Serial.println("parseObject() failed");
     return false;
   }
-
-  const char* error = root["state"];
-  if (error) {
-    stateOn = (strcmp(root["state"], on_cmd) == 0);
-    if  (stateOn)
-      Serial.println("State ON");
-    else 
-      Serial.println("State OFF, setting as OFF");
-  } else {
-      Serial.println("State not set, setting as OFF");
-      stateOn = false;
+  
+  bool stateOn = false;
+  uint16_t targetBrightness = 0;
+  uint16_t transitionTimeMs = MIN_TRANSITION_TIME ;
+  uint8_t transitionPreset = MANUAL;
+  
+  const char* res = root["state"];
+  if (!res || (strcmp(root["state"], gConfOnCommand)!=0 )) {
+    Serial.println("State not set or not ON, setting as OFF");
+    stateOn = true;
+    } else {
+    Serial.println("State set ON");
+    stateOn = false;
   }
-  error = root["transition"];
-  if (error ) {
-    error = root["transition"]["timeMs"];
-    if (error) {
+
+  res = root["transition"];
+  if (!res) {
+    Serial.println("No transition set");  
+    transitionPreset= MANUAL;
+    transitionTimeMs = MIN_TRANSITION_TIME;
+  } else {
+    res = root["transition"]["timeMs"];
+    if (res) {
       if (root["transition"]["timeMs"] <= MIN_TRANSITION_TIME) {
         Serial.println("Transition too short, setting to lower limit");  
         transitionTimeMs = MIN_TRANSITION_TIME;
@@ -263,8 +318,8 @@ bool processJson(char* message) {
       transitionTimeMs = MIN_TRANSITION_TIME;
     }
     
-    error = root["transition"]["preset"];
-    if (error) {
+    res = root["transition"]["preset"];
+    if (res) {
       if (strcmp(root["transition"]["preset"], "CLOCK") == 0) {
       transitionPreset= CLOCK_BASED;
       Serial.println("Transition clock based");  
@@ -282,14 +337,10 @@ bool processJson(char* message) {
     Serial.println("Transition not specified");  
     transitionPreset= MANUAL;
   }
- } else {
-    Serial.println("Transition chapter not set, time to lower limit and preset to manual");  
-    transitionTimeMs = MIN_TRANSITION_TIME;
-    transitionPreset= MANUAL;
  }
 
- error = root["brightness"];
- if (error) {
+ res = root["brightness"];
+ if (res) {
    if (root["brightness"] > MAX_BRIGHTNESS_ALLOWED) {
       Serial.println("Brightness set too high, limiting");
       targetBrightness = MAX_BRIGHTNESS_ALLOWED;
@@ -308,55 +359,51 @@ bool processJson(char* message) {
     }
   }
 
-  if (targetBrightness > currentBrightness) {
-    startFadeOn = true;
-    startFadeOff = false;
-  } else if (targetBrightness < currentBrightness) {
-    startFadeOn = false;
-    startFadeOff = true;
-  } else {
-    startFadeOn = false;
-    startFadeOff = false;
+  // free the data in the queue 
+  transitionQueueElem_t *pTransition = NULL;
+  STAILQ_FOREACH(pTransition, &transitionQueue, transitionEntry) {
+    STAILQ_REMOVE_HEAD(&transitionQueue, transitionEntry);
+    free(pTransition);
   }
+
+  //build and insert the scenario
+  buildAndInsertScenario(targetBrightness, transitionTimeMs, transitionPreset);
+
   return true;
 }
 
 
 /********************************** START SEND STATE*****************************************/
 void sendState(void) {
-  StaticJsonBuffer<BUFFER_SIZE> jsonBuffer;
+  StaticJsonBuffer<JSON_BUFFER_SIZE> jsonBuffer;
 
   JsonObject& root = jsonBuffer.createObject();
+    root["CurrentBrightness"] = gCurrentBrightness;
+    if (gpCurrentTransition!= NULL) {
+      root["transition][stepBrightness"] = gpCurrentTransition->stepBrightness;
+      root["transition][stepDelay"] = gpCurrentTransition->stepDelay;
+      root["transition][stepCount"] = gpCurrentTransition->stepCount;
 
-  root["state"] = (stateOn) ? on_cmd : off_cmd;
-  root["targetBrightness"] = targetBrightness;
-  root["currentBrightness"] = currentBrightness;
-  root["fadingon"] = startFadeOn ? true : false;
-  root["fadingoff"] = startFadeOff ? true : false;
-  root["transition][timeMs"] = transitionTimeMs;
-  root["transition][preset"] = transitionPreset;
-  
+  }
   char buffer[root.measureLength() + 1];
   root.printTo(buffer, sizeof(buffer));
 
-  client.publish(light_state_topic, buffer, true);
+  gMqttClient.publish(gConfLightStateTopic, buffer, true);
 }
-
-
 
 /********************************** START RECONNECT*****************************************/
 void reconnect() {
   // Loop until we're reconnected
-  while (!client.connected()) {
+  while (!gMqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (client.connect(SENSORNAME, mqtt_username, mqtt_password)) {
+    if (gMqttClient.connect(SENSORNAME, gConfMqttUsername, gConfMqttPassword)) {
       Serial.println("connected");
-      client.subscribe(light_set_topic);
+      gMqttClient.subscribe(gConfLightSetTopic);
       sendState();
     } else {
       Serial.print("failed, rc=");
-      Serial.print(client.state());
+      Serial.print(gMqttClient.state());
       Serial.println(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       delay(5000);
@@ -366,56 +413,56 @@ void reconnect() {
 
 
 /********************************** LED brightness setter**********************************/
-void setStripBrightness(int currentBrightness)
+void setStrgConfIpAddressBrightness(int gCurrentBrightness)
 {
-  if (currentBrightness > MAX_BRIGHTNESS_ALLOWED)
-    currentBrightness = MAX_BRIGHTNESS_ALLOWED;
+  if (gCurrentBrightness > MAX_BRIGHTNESS_ALLOWED)
+    gCurrentBrightness = MAX_BRIGHTNESS_ALLOWED;
 
-  if (currentBrightness > MAX_PWM_COMMAND)
-    currentBrightness = MAX_PWM_COMMAND;
+  if (gCurrentBrightness > MAX_PWM_COMMAND)
+    gCurrentBrightness = MAX_PWM_COMMAND;
 
-  if (currentBrightness <PWM_COMMANDED_ZERO_UNDER_COMMAND)
-    currentBrightness = 0;
+  if (gCurrentBrightness <PWM_COMMANDED_ZERO_UNDER_COMMAND)
+    gCurrentBrightness = 0;
 
-  analogWrite(CORRIDOR_LAMP,currentBrightness);
+  analogWrite(CORRIDOR_LAMP,gCurrentBrightness);
 }
 
 /********************************** START MAIN LOOP*****************************************/
 void loop() {
-    if (specialSerialMode) {
+    if (gSpecialSerialMode) {
       if (Serial.available()) {
         while(Serial.available()) {
-          if (serialBufferPos < (SERIAL_BUFFER_SIZE -1)) {
-              serialBuffer[serialBufferPos] = Serial.read();
-              if (serialBuffer[serialBufferPos] == '+'){
-                specialBrightness+=50;
-                if (specialBrightness > MAX_PWM_COMMAND)
-                  specialBrightness = MAX_PWM_COMMAND;
-                setStripBrightness(specialBrightness);
-              } else if (serialBuffer[serialBufferPos] == '-'){
-                specialBrightness-=50;
-                if (specialBrightness < PWM_COMMANDED_ZERO_UNDER_COMMAND)
-                  specialBrightness = 0 ;
-                setStripBrightness(specialBrightness);
+          if (gSerialBufferPos < (SERIAL_BUFFER_SIZE -1)) {
+              gSerialBuffer[gSerialBufferPos] = Serial.read();
+              if (gSerialBuffer[gSerialBufferPos] == '+'){
+                gSpecialBrightness+=50;
+                if (gSpecialBrightness > MAX_PWM_COMMAND)
+                  gSpecialBrightness = MAX_PWM_COMMAND;
+                setStrgConfIpAddressBrightness(gSpecialBrightness);
+              } else if (gSerialBuffer[gSerialBufferPos] == '-'){
+                gSpecialBrightness-=50;
+                if (gSpecialBrightness < PWM_COMMANDED_ZERO_UNDER_COMMAND)
+                  gSpecialBrightness = 0 ;
+                setStrgConfIpAddressBrightness(gSpecialBrightness);
               }                
-              serialBufferPos = 0;
+              gSerialBufferPos = 0;
           }
         }
       }
-    } else if (serialMode) {
+    } else if (gSerialMode) {
     if (Serial.available()) {
-      if (currentBrightness == targetBrightness) {
+      if (gpCurrentTransition == NULL) {
         while(Serial.available()) {
-          if (serialBufferPos < (SERIAL_BUFFER_SIZE -1)) {
-              serialBuffer[serialBufferPos] = Serial.read();
-              serialBufferPos++;
-            if ( serialBuffer[serialBufferPos - 1] == '}') { 
-              lightCommandCallback(light_set_topic,serialBuffer,serialBufferPos);
-              serialBufferPos = 0;
+          if (gSerialBufferPos < (SERIAL_BUFFER_SIZE -1)) {
+              gSerialBuffer[gSerialBufferPos] = Serial.read();
+              gSerialBufferPos++;
+            if ( gSerialBuffer[gSerialBufferPos - 1] == '\n') { 
+              lightCommandCallback(gConfLightSetTopic,gSerialBuffer,gSerialBufferPos);
+              gSerialBufferPos = 0;
             }
           } else {
             Serial.read();
-            serialBufferPos = 0;
+            gSerialBufferPos = 0;
             break;
           }
         }
@@ -425,7 +472,7 @@ void loop() {
     }
   }
   else {
-    if (!client.connected()) {
+    if (!gMqttClient.connected()) {
       reconnect();
     }
 
@@ -436,63 +483,43 @@ void loop() {
       return;
     }
 
-    client.loop();
+    gMqttClient.loop();
 
     ArduinoOTA.handle();
   }
-  
-  if (!specialSerialMode) {
-   if(currentBrightness != targetBrightness) {
-     if (startFadeOn || startFadeOff) {
-      Serial.print("first step fading from ");
-      Serial.print(currentBrightness,DEC);
-      Serial.print(" to ");
-      Serial.print(targetBrightness,DEC);
-      Serial.print(" in ");
-      Serial.print(transitionTimeMs,DEC);
-      Serial.println(" ms");
 
-      // we want the max stepCount we can, so it depends wether transition time 
-      // or brightness count is higher. 
-      // we might want to set a minimum delay or minimum brightness step
-      // so account for that
-      
-      if ((abs(targetBrightness - currentBrightness) / MIN_STEP_BRIGHTNESS) > (transitionTimeMs / MIN_STEP_DELAY)) {
-      //we can do more than 1 brightness step per delay step ms. set stepDelay to that time
-        stepDelay = MIN_STEP_DELAY;
-        stepCount = transitionTimeMs / stepDelay;
-        stepBrightness = (targetBrightness - currentBrightness) / stepCount;
-      } else {
-      //we cannot. brightness difference is the limiting factor.
-        stepCount = abs(targetBrightness - currentBrightness) / MIN_STEP_BRIGHTNESS;
-        stepDelay = transitionTimeMs / stepCount ;
-        stepBrightness = (targetBrightness > currentBrightness)?MIN_STEP_BRIGHTNESS:-MIN_STEP_BRIGHTNESS;
-      }
-
-      if (currentBrightness < PWM_COMMANDED_ZERO_UNDER_COMMAND)
-        currentBrightness = PWM_COMMANDED_ZERO_UNDER_COMMAND; 
-      
-      startFadeOn = false;
-      startFadeOff = false;
-      Serial.print("delay step ");
-      Serial.print(stepDelay,DEC);
-      Serial.print(", step count ");
-      Serial.print(stepCount,DEC);
-      Serial.print(", brightness step ");
-      Serial.println(stepBrightness,DEC);
-     }
-
-    delay(stepDelay);
-    currentBrightness += stepBrightness;
-      
-    setStripBrightness(currentBrightness);
-    stepCount--;
-
-    if (stepCount<=0) {
-      Serial.println("Stop Fading");
-      stepCount = 0;
-      currentBrightness = targetBrightness;
+  // are we processing a transition ?
+  if (gpCurrentTransition==NULL) {
+    // no. Load one if available.
+    //is there an available transition ?
+    if (!STAILQ_EMPTY(&transitionQueue)) {
+      // yes, load it
+      gpCurrentTransition = STAILQ_FIRST(&transitionQueue);
+      // and remove it from the queue 
+      STAILQ_REMOVE_HEAD(&transitionQueue, transitionEntry);
     }
   }
- }
+
+  //lets check again.
+  // are we processing a transition ?
+  if (!(gpCurrentTransition==NULL)) {
+    //yes. do it !
+    delay(gpCurrentTransition->stepDelay);
+    gCurrentBrightness += gpCurrentTransition->stepBrightness;
+    setStrgConfIpAddressBrightness(gCurrentBrightness);
+    // did we reach the end ?
+    if (gpCurrentTransition->stepCount == 0) {
+      // yes. Free the transition.
+      Serial.println("Stop Fading");
+      free(gpCurrentTransition);
+      gpCurrentTransition = NULL;
+    } else {
+      // no. Decrease step count
+      gpCurrentTransition->stepCount--;
+    }
+  } else {
+    // no transition available, do nothing. Not so fast though,
+    // we need some time to process the incoming data if it ever comes
+    delay (10);
+  }
 }
