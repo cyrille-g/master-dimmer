@@ -1,10 +1,11 @@
-
+#ifndef SETTINGS_H
+#define SETTINGS_H
 /* DEFINES */
 
 
 /**************************** OTA **************************************************/
 #define SENSORNAME "sensorname" //change this to whatever you want to call your device
-#define OTAPASSWORD "OTApwd" //the password you will need to enter to upload remotely via the ArduinoIDE
+#define OTAPASSWORD "OTApwd" //the gConfPassword you will need to enter to upload remotely via the ArduinoIDE
 #define OTAPORT 880
 
 /******************************* MQTT **********************************************/
@@ -35,62 +36,26 @@
 #define MAX_PWM_COMMAND 1020
 #define PWM_COMMANDED_ZERO_UNDER_COMMAND 5
 
-
-/* CONST VARS */
-/**************************************** JSON *************************************/
-const int BUFFER_SIZE = JSON_OBJECT_SIZE(10);
-
-
 /************ WIFI and MQTT Information (CHANGE THESE FOR YOUR SETUP) **************/
-const char* ssid = "ssid-8C8230B0"; //type your WIFI information inside the quotes
-const char* password = "wifipwd";
-const char* mqtt_server = "192.168.200.200";
-const char* mqtt_username = "mqttUsername";
-const char* mqtt_password = "mqttPassword";
-const int mqtt_port = 1883;
+const char* gConfSsid = "ssid"; //type your WIFI information inside the quotes
+const char* gConfPassword = "wifipwd";
+const char* gConfMqttServerIp = "192.168.200.200";
+const char* gConfMqttUsername = "mqttUsername";
+const char* gConfMqttPassword = "mqttPassword";
+const int   gConfMqttPort = 1883;
 
 /************* MQTT TOPICS (change these topics as you wish)  **********************/
-const char* light_state_topic = "light/topic/state";
-const char* light_set_topic = "light/topic/POWER";
+const char* gConfLightStateTopic = "light/topic/state";
+const char* gConfLightSetTopic = "light/topic/POWER";
 
-const char* on_cmd = "ON";
-const char* off_cmd = "OFF";
+const char* gConfOnCommand = "ON";
+const char* gConfOffCommand = "OFF";
 
 /**************************************** NETWORK **********************************/
 
 // the media access control (ethernet hardware) address for the shield:
-const byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };  
+const byte gConfMacAddress[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };  
 //the IP address for the shield:
-const byte ip[] = { 192, 168, 4, 166 };   
+const byte gConfIpAddress[] = { 192, 168, 4, 166 };   
 
-/* VARS */ 
-/**************************************** NETWORK **********************************/
-
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-
-/******************************** serial ***********************************************/
-bool serialMode = false;
-byte serialBuffer[SERIAL_BUFFER_SIZE];
-byte serialBufferPos = 0;
-bool specialSerialMode = false;
-int specialBrightness = 0;
-
-
-
-/******************************** fade *************************************************/
-
-int targetBrightness = 0;
-int currentBrightness = 0;
-int stepCount = MIN_STEP_COUNT;
-int stepDelay = MIN_STEP_DELAY;
-int stepBrightness = 0;
-
-bool stateOn = false;
-bool startFadeOn = false;
-bool startFadeOff = false;
-
-int transitionTimeMs = MIN_TRANSITION_TIME;
-int transitionPreset = MANUAL;
-int gOnboardLedState = HIGH;
+#endif
