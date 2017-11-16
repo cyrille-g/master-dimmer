@@ -37,10 +37,16 @@ bool    gSpecialSerialMode = false;
 int16_t gSpecialBrightness = 0;
 
 /* CONST VARS */
-/**************************************** JSON *************************************/
+/**************************************** JSON ************************/
 const int JSON_BUFFER_SIZE = JSON_OBJECT_SIZE(10);
 
-/******************************** fade ******************************/
+/******************************** fade ********************************/
 int16_t gCurrentBrightness = 0;
+
+/**************************** NTP management **************************/
+
+os_timer_t gNtpTimer;
+bool_t gNtpRequestDone = FALSE ;
+uint8_t gNtpRequestTryCount = 0;
 
 #endif
