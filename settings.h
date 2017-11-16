@@ -66,4 +66,14 @@ uint16_t gConfNtpServerPort = 4567;
 char gConftimeServer[] = "fr.pool.ntp.org";
 uint8_t gConfNtpPacketBuffer[GCONF_NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 
+
+/****************************** TIME BASED TRANSITION*********************************/
+
+uint8_t gConfAutoDimStartHour = 22 ; // "time to start dimming" hour. Dimming will start from now.
+uint8_t gConfHourOfInflexion = 4  ; // "pitch blackest time of your night" hour. The closer to this hour, the dimmer the light.
+uint8_t gConfAutoDimStopHour = 10 ; // "time to stop dimming" hour. Dimming will be back to normal at that time.
+uint16_t gConfMaxDimmedBrightness = 300;  // this brightness is achieved at gConfHourOfInflexion
+uint16_t gConfMaxDimmedTransitionTime = 8000;  // this time will be used at gConfHourOfInflexion
+
+
 #endif
