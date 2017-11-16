@@ -228,7 +228,28 @@ void lightCommandCallback(const char* topic, byte* payload, unsigned int length)
 
 /****************** scenario builder from JSON *******************************************/
 void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs, uint8_t transitionPreset) {
+ 
+  // TODO 
+  // right now the preset is not used. Code it when time and light sensor is available
+  switch (transitionPreset) {
+    
+    case CLOCK_BASED: /* this is the clock based mode */
+      /* in clock based mode, the more it gets near a set hour,
+      the dimmer the light,
+      the longer the transition */
+      break;
+      
+    case LIGHT_BASED: /* this is the light based mode */
+      break;
 
+    case CLOCK_AND_LIGHT_BASED /*  this is the clock and light based mode */
+      break;
+
+    default: /* this is the manual mode */
+      break;
+  }
+  
+  
   Serial.print("Scenario fading from ");
   Serial.print(gCurrentBrightness,DEC);
   Serial.print(" to ");
@@ -237,10 +258,6 @@ void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs,
   Serial.print(transitionTimeMs,DEC);
   Serial.print(" ms with preset: ");
   Serial.println(transitionPreset, DEC);
-
-  
-  // TODO 
-  // right now the preset is not used. Code it when time and light sensor is available
 
   
   // we want the max stepCount we can, so it depends wether transition time 
@@ -282,83 +299,85 @@ bool processJson(char* message) {
     return false;
   }
   
-  bool stateOn = false;
   uint16_t targetBrightness = 0;
   uint16_t transitionTimeMs = MIN_TRANSITION_TIME ;
   uint8_t transitionPreset = MANUAL;
+
+  /* The "state" command is self sufficient. If it is present, 
+     there is no need to parse anything else.
+     Other data is relevant when state is not in the JSON . We still need to set 
+     targetBrightness, transitionTimeMs and transitionPreset */
   
   const char* res = root["state"];
-  if (!res || (strcmp(root["state"], gConfOnCommand)!=0 )) {
-    Serial.println("State not set or not ON, setting as OFF");
-    stateOn = true;
+  if (res) {
+    if (strcmp(root["state"], gConfOnCommand) == 0 )) {
+      Serial.println("State set ON");
+      targetBrightness = MAX_BRIGHTNESS_ALLOWED;
+      transitionPreset = CLOCK_BASED;
     } else {
-    Serial.println("State set ON");
-    stateOn = false;
-  }
-
-  res = root["transition"];
-  if (!res) {
-    Serial.println("No transition set");  
-    transitionPreset= MANUAL;
-    transitionTimeMs = MIN_TRANSITION_TIME;
+      Serial.println("State set and not ON, setting as OFF");
+      transitionPreset = CLOCK_BASED;
+    } 
   } else {
-    res = root["transition"]["timeMs"];
-    if (res) {
-      if (root["transition"]["timeMs"] <= MIN_TRANSITION_TIME) {
-        Serial.println("Transition too short, setting to lower limit");  
-        transitionTimeMs = MIN_TRANSITION_TIME;
-      } else if (root["transition"]["timeMs"] > MAX_TRANSITION_TIME) { 
-        Serial.println("Transition too short high, setting to higher limit");  
-        transitionTimeMs = MAX_TRANSITION_TIME;
+    res = root["transition"];
+    if (!res) {
+      Serial.println("No transition set");  
+      transitionPreset= CLOCK_BASED;
+      transitionTimeMs = MIN_TRANSITION_TIME;
+    } else {
+      res = root["transition"]["timeMs"];
+      if (res) {
+        if (root["transition"]["timeMs"] <= MIN_TRANSITION_TIME) {
+          Serial.println("Transition too short, setting to lower limit");  
+          transitionTimeMs = MIN_TRANSITION_TIME;
+        } else if (root["transition"]["timeMs"] > MAX_TRANSITION_TIME) { 
+          Serial.println("Transition too short high, setting to higher limit");  
+          transitionTimeMs = MAX_TRANSITION_TIME;
+        } else {
+          transitionTimeMs = root["transition"]["timeMs"];
+        }
       } else {
-        transitionTimeMs = root["transition"]["timeMs"];
+        Serial.println("Transition time not set, setting to lower limit");  
+        transitionTimeMs = MIN_TRANSITION_TIME;
+      }
+
+      res = root["transition"]["preset"];
+      if (res) {
+        if (strcmp(root["transition"]["preset"], "CLOCK") == 0) {
+        transitionPreset= CLOCK_BASED;
+        Serial.println("Transition clock based");  
+      } else if (strcmp(root["transition"]["preset"], "LIGHT") == 0) {
+        Serial.println("Transition light sensor based");  
+        transitionPreset= LIGHT_BASED;
+      } else if (strcmp(root["transition"]["preset"], "AUTO") == 0) {
+        Serial.println("Transition both clock and light sensor based");  
+        transitionPreset= CLOCK_AND_LIGHT_BASED;
+      } else {
+        Serial.println("Transition set to manual");  
+        transitionPreset= MANUAL;
       }
     } else {
-      Serial.println("Transition time not set, setting to lower limit");  
-      transitionTimeMs = MIN_TRANSITION_TIME;
-    }
-    
-    res = root["transition"]["preset"];
-    if (res) {
-      if (strcmp(root["transition"]["preset"], "CLOCK") == 0) {
-      transitionPreset= CLOCK_BASED;
-      Serial.println("Transition clock based");  
-    } else if (strcmp(root["transition"]["preset"], "LIGHT") == 0) {
-      Serial.println("Transition light sensor based");  
-      transitionPreset= LIGHT_BASED;
-    } else if (strcmp(root["transition"]["preset"], "AUTO") == 0) {
-      Serial.println("Transition both clock and light sensor based");  
-      transitionPreset= CLOCK_AND_LIGHT_BASED;
-    } else {
-      Serial.println("Transition set to manual");  
+      Serial.println("Transition not specified");  
       transitionPreset= MANUAL;
     }
-  } else {
-    Serial.println("Transition not specified");  
-    transitionPreset= MANUAL;
-  }
- }
+   }
 
- res = root["brightness"];
- if (res) {
-   if (root["brightness"] > MAX_BRIGHTNESS_ALLOWED) {
-      Serial.println("Brightness set too high, limiting");
-      targetBrightness = MAX_BRIGHTNESS_ALLOWED;
+   res = root["brightness"];
+   if (res) {
+     if (root["brightness"] > MAX_BRIGHTNESS_ALLOWED) {
+        Serial.println("Brightness set too high, limiting");
+        targetBrightness = MAX_BRIGHTNESS_ALLOWED;
+       } else {
+        targetBrightness = root["brightness"];
+       }
      } else {
-      targetBrightness = root["brightness"];
-     }
-   } else {
-    // if not specified, root brightness is 0
-    Serial.print("No brightness specified");
-    if (stateOn) {
-      targetBrightness = MAX_BRIGHTNESS_ALLOWED;
-      Serial.println(" set to max");
-    } else {
-      targetBrightness = 0;
-      Serial.println(" set to 0");
+      // if not specified, root brightness is 0
+        Serial.print("No brightness specified");
+        targetBrightness = 0;
+        Serial.println(" set to 0");
+      }
     }
   }
-
   // free the data in the queue 
   transitionQueueElem_t *pTransition = NULL;
   STAILQ_FOREACH(pTransition, &transitionQueue, transitionEntry) {
