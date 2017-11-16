@@ -31,6 +31,53 @@ void toggleOnboardLed(void) {
 }
 
 
+/******************************* NTP and timer management *****************************/
+
+uint32_t readNtpAnswer (void) {
+  // TODO read the buffer and return its value if an NTP answer is found
+  return 0; 
+}
+
+void sendNtpRequest (void) {
+ // TODO send an NTP request
+  return;
+}
+
+void ntpTimerCallback(void *pArg) {
+  if (!gNtpRequestDone) {
+    sendNtpRequest();
+    gNtpRequestTryCount++;
+    gNtpRequestDone = TRUE;
+    // arm timer to trig again in 1 sec
+    os_timer_arm(gNtpTimer,1000,FALSE);
+  } else {
+    uint32_t currentTime = readNtpAnswer();
+    if (currentTime != 0) {
+      // we did read. set the time 
+      SetTime(currentTime);
+      //reset the count
+      gNtpRequestTryCount = 0;
+      // arm timer to trig again in 1 day
+      // TODO: do it once per day at a time fit to detect 
+      // summer/winter clock change  
+      os_timer_arm(gNtpTimer,86400000,FALSE);
+    } else if (gNtpRequestTryCount < 5) {
+      //increase gNtpRequestTryCount
+      gNtpRequestTryCount++;
+      // arm timer to trig again in 1 sec
+      os_timer_arm(gNtpTimer,1000,FALSE);
+    } else {
+      // we failed the read 5 times in a row
+      // meaning the request failed.
+      // reset requestTryCount and gNtpRequestDone
+      // try again in 10 minutes
+      gNtpRequestTryCount = 0;
+      gNtpRequestDone = FALSE;
+      os_timer_arm(gNtpTimer,600000,FALSE);
+    }
+  }
+}
+
 
 /********************************** START SETUP*****************************************/
 void setup() {
@@ -96,6 +143,10 @@ void setup() {
   
    // wifi setup
   setup_wifi();
+
+  // NTP and time setup. Arm the timer to expire in 1 second.
+  os_timer_setfn(gNtpTimer, ntpTimerCallback, NULL);
+  os_timer_arm(gNtpTimer,1000,FALSE);
    
   // MQTT setup
   Serial.println("Wifi connected, reaching for MQTT server"); 
