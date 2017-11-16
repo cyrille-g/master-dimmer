@@ -42,7 +42,7 @@ const char* gConfPassword = "wifipwd";
 const char* gConfMqttServerIp = "192.168.200.200";
 const char* gConfMqttUsername = "mqttUsername";
 const char* gConfMqttPassword = "mqttPassword";
-const int   gConfMqttPort = 1883;
+const uint8_t gConfMqttPort = 1883;
 
 /************* MQTT TOPICS (change these topics as you wish)  **********************/
 const char* gConfLightStateTopic = "light/topic/state";
@@ -54,8 +54,16 @@ const char* gConfOffCommand = "OFF";
 /**************************************** NETWORK **********************************/
 
 // the media access control (ethernet hardware) address for the shield:
-const byte gConfMacAddress[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };  
+const uint8_t gConfMacAddress[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };  
 //the IP address for the shield:
-const byte gConfIpAddress[] = { 192, 168, 4, 166 };   
+const uint8_t gConfIpAddress[] = { 192, 168, 4, 166 };   
+
+
+/**************************************** TIME **************************************/
+#define GCONF_NTP_PACKET_SIZE 48   // NTP time stamp is in the first 48 bytes of the message
+
+uint16_t gConfNtpServerPort = 4567; 
+char gConftimeServer[] = "fr.pool.ntp.org";
+uint8_t gConfNtpPacketBuffer[GCONF_NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 
 #endif
