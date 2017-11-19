@@ -14,20 +14,17 @@ typedef struct transitionQueueElem_s {
   STAILQ_ENTRY(transitionQueueElem_s) transitionEntry;
 } transitionQueueElem_t;
 
-transitionQueueElem_t *gpCurrentTransition = NULL;
+transitionQueueElem_t *gpCurrentTransition[MAX_ROOM_COUNT] = {NULL};
 
 
 
 /******************************** queue system ***********************/
 typedef STAILQ_HEAD(, transitionQueueElem_s) transitionQueueHead_t;
-transitionQueueHead_t transitionQueue;
 
 
 /******************************** hardware ***************************/
 int gOnboardLedState = HIGH;
-
-
-
+bool gPowerNeeded = false;
 /******************************** network ****************************/
 WiFiClient   gEspClient;
 PubSubClient gMqttClient(gEspClient);
@@ -44,8 +41,15 @@ int16_t gSpecialBrightness = 0;
 /**************************************** JSON ************************/
 const int JSON_BUFFER_SIZE = JSON_OBJECT_SIZE(10);
 
-/******************************** fade ********************************/
-int16_t gCurrentBrightness = 0;
+/******************************light management ***********************/
+typedef struct {
+  int16_t currentBrightness = 0;
+  char *setTopic = NULL;
+  char *stateTopic = NULL;
+  transitionQueueHead_t transitionQueue;
+} roomLight_t;
+
+roomLight_t gLedStrip[MAX_ROOM_COUNT];
 
 /**************************** NTP management **************************/
 

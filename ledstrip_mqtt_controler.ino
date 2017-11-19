@@ -35,7 +35,7 @@ void toggleOnboardLed(void) {
 
 /********************************** PIN SETUP   ****************************************/
 void pinSetup() {
-// set all pins to output mode and state low
+// set all pins to output mode and state except D1
   pinMode(D0,OUTPUT);         // pwm 1
   analogWrite(D0,0);
   pinMode(D1,OUTPUT);         // enable pwm out. 
@@ -59,6 +59,16 @@ void pinSetup() {
   pinMode(LED_CARTE, OUTPUT);
 }  
 
+void setPowerOutput(void) {
+  digitalWrite(D3,HIGH); // power supply
+  digitalWrite(D1,LOW);  // TC4469
+}
+
+void cutPowerOutput(void) {
+  digitalWrite(D3,LOW);  // power supply
+  digitalWrite(D1,HIGH); // TC4469
+}
+
 
 /********************************** START SETUP ****************************************/
 void setup() {
@@ -73,14 +83,25 @@ void setup() {
   // setup pins
   pinSetup();
   
-  // scenario queue
-  STAILQ_INIT(&transitionQueue);
+  // Init scenario queues
+  int index=0;
+  size_t topicSize = 0;
+  for(index=0;index<MAX_ROOM_COUNT;index++) {
+    STAILQ_INIT(&(gLedStrip[index].transitionQueue));
+    /* init MQTT set and state topic: get the size first. do not forget trailing \0 and the 2 slashes */
+    topicSize = strlen (MQTT_PREFIX) + strlen (LUT_IndexToRoomName[index]) + strlen (MQTT_STATE) + 3; 
+    gLedStrip[index].stateTopic = (char *)malloc(topicSize);
+    sprintf(gLedStrip[index].stateTopic,"%s/%s/%s",MQTT_PREFIX,LUT_IndexToRoomName[index],MQTT_STATE);
+
+    topicSize = strlen (MQTT_PREFIX) + strlen (LUT_IndexToRoomName[index]) + strlen (MQTT_SET) + 3; 
+    gLedStrip[index].setTopic = (char *)malloc(topicSize);
+    sprintf(gLedStrip[index].setTopic,"%s/%s/%s",MQTT_PREFIX,LUT_IndexToRoomName[index],MQTT_SET);
+  }
   
   byte received= 0;
-  int i=0;
   Serial.println("Press S for serial mode, T for test mode");
   delay(500);
-  for(i=0;(i<10) && (!gSerialMode);i++) {
+  for(index=0;(index<10) && (!gSerialMode);index++) {
     while (Serial.available()) {
       received = Serial.read();
       if (received == 'S') {
@@ -138,7 +159,7 @@ void setup() {
   //OTA setup
   ArduinoOTA.setPort(OTAPORT);
   // Hostname defaults to esp8266-[ChgConfIpAddressID]
-  ArduinoOTA.setHostname(SENSORNAME);
+  ArduinoOTA.setHostname(DEVICENAME);
 
   // No authentication by default
   ArduinoOTA.setPassword(OTAPASSWORD);
@@ -240,7 +261,7 @@ void setup_wifi(void) {
 
 
 /********************************** START CALLBACK*****************************************/
-void lightCommandCallback(const char* topic, byte* payload, unsigned int length) {
+void lightCommandCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
@@ -252,15 +273,59 @@ void lightCommandCallback(const char* topic, byte* payload, unsigned int length)
   message[length] = '\0';
   Serial.println(message);
 
-  if (!processJson(message)) {
+  /* first, check topic validity. If it is MQTT_PREFIX /room/MQTT_POWER, then go forward */
+  char *token;
+   
+  /* get the first token */
+  token = strtok(topic, "/");
+
+   // does it start with MQTT_PREFIX ?
+  if ((token != NULL ) && strcmp(token,MQTT_PREFIX) != 0) {
+    //no; leave
+    Serial.println("wrong MQTT prefix");
+    return;
+  }
+  token = strtok(NULL, topic);
+  uint8_t index = 0;
+  // does it name a known room ?
+  for (index=0; index < MAX_ROOM_COUNT; index++) {
+    if (strcmp(LUT_IndexToRoomName[index], token) == 0) {
+       // found a match, so we break out of it.
+      break;
+    }
+  }
+
+  // if index equals MAX_ROOM_COUNT, we did not find anything, so leave
+  if (index == MAX_ROOM_COUNT) {
+    Serial.println("Unknown room");
+    return;
+  }
+
+  token = strtok(NULL, topic);
+  // does it end with MQTT_POWER ?
+  if (strcmp(token , MQTT_SET) != 0)  {
+    Serial.println("Unknown power suffix");
+    return;
+  }
+
+  // there should not be any data left
+  token = strtok(NULL, topic);
+  if (token != NULL) {
+    Serial.println("Topic too long");
+    return;
+  }
+
+  // tell the Json processor which queue it should use
+  // by passing index
+  if (!processJson(message, index)) {
     return;
   }
  
-  sendState();
+  sendState(index);
 }
 
 /****************** scenario builder from JSON *******************************************/
-void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs, uint8_t transitionPreset) {
+void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs, uint8_t transitionPreset, uint8_t index) {
  
   // TODO 
   // right now the preset is not used. Code it when time and light sensor is available
@@ -284,7 +349,7 @@ void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs,
   
   
   Serial.print("Scenario fading from ");
-  Serial.print(gCurrentBrightness,DEC);
+  Serial.print(gLedStrip[index].currentBrightness,DEC);
   Serial.print(" to ");
   Serial.print(targetBrightness,DEC);
   Serial.print(" in ");
@@ -299,19 +364,19 @@ void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs,
   // so account for that
   transitionQueueElem_t *pTransition = (transitionQueueElem_t *)malloc(sizeof(transitionQueueElem_t));
   
-  if ((abs(targetBrightness - gCurrentBrightness) / MIN_STEP_BRIGHTNESS) > (transitionTimeMs / MIN_STEP_DELAY)) {
+  if ((abs(targetBrightness - gLedStrip[index].currentBrightness) / MIN_STEP_BRIGHTNESS) > (transitionTimeMs / MIN_STEP_DELAY)) {
   //we can do more than 1 brightness step per delay step ms. set stepDelay to that time
     pTransition->stepDelay = MIN_STEP_DELAY;
     pTransition->stepCount = transitionTimeMs / pTransition->stepDelay;
-    pTransition->stepBrightness = (targetBrightness - gCurrentBrightness) / pTransition->stepCount;
+    pTransition->stepBrightness = (targetBrightness - gLedStrip[index].currentBrightness) / pTransition->stepCount;
   } else {
   //we cannot. brightness difference is the limiting factor.
-    pTransition->stepCount = abs(targetBrightness - gCurrentBrightness) / MIN_STEP_BRIGHTNESS;
+    pTransition->stepCount = abs(targetBrightness - gLedStrip[index].currentBrightness) / MIN_STEP_BRIGHTNESS;
     pTransition->stepDelay = transitionTimeMs / pTransition->stepCount ;
-    pTransition->stepBrightness = (targetBrightness > gCurrentBrightness)?MIN_STEP_BRIGHTNESS:-MIN_STEP_BRIGHTNESS;
+    pTransition->stepBrightness = (targetBrightness > gLedStrip[index].currentBrightness)?MIN_STEP_BRIGHTNESS:-MIN_STEP_BRIGHTNESS;
   }
 
-  STAILQ_INSERT_HEAD(&transitionQueue,pTransition,transitionEntry);
+  STAILQ_INSERT_HEAD(&(gLedStrip[index].transitionQueue),pTransition,transitionEntry);
 
   Serial.print("delay step ");
   Serial.print(pTransition->stepDelay,DEC);
@@ -322,7 +387,7 @@ void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs,
 }
 
 /********************************** JSON PROCESSOR *****************************************/
-bool processJson(char* message) {
+bool processJson(char* message, uint8_t index) {
   StaticJsonBuffer<JSON_BUFFER_SIZE> jsonBuffer;
 
   JsonObject& root = jsonBuffer.parseObject(message);
@@ -413,34 +478,34 @@ bool processJson(char* message) {
   
   // free the data in the queue 
   transitionQueueElem_t *pTransition = NULL;
-  STAILQ_FOREACH(pTransition, &transitionQueue, transitionEntry) {
-    STAILQ_REMOVE_HEAD(&transitionQueue, transitionEntry);
+  STAILQ_FOREACH(pTransition, &(gLedStrip[index].transitionQueue), transitionEntry) {
+    STAILQ_REMOVE_HEAD(&(gLedStrip[index].transitionQueue), transitionEntry);
     free(pTransition);
   }
 
   //build and insert the scenario
-  buildAndInsertScenario(targetBrightness, transitionTimeMs, transitionPreset);
+  buildAndInsertScenario(targetBrightness, transitionTimeMs, transitionPreset, index);
 
   return true;
 }
 
 
 /********************************** START SEND STATE*****************************************/
-void sendState(void) {
+void sendState(uint8_t index) {
   StaticJsonBuffer<JSON_BUFFER_SIZE> jsonBuffer;
 
   JsonObject& root = jsonBuffer.createObject();
-    root["CurrentBrightness"] = gCurrentBrightness;
+    root["CurrentBrightness"] = gLedStrip[index].currentBrightness;
     if (gpCurrentTransition!= NULL) {
-      root["transition][stepBrightness"] = gpCurrentTransition->stepBrightness;
-      root["transition][stepDelay"] = gpCurrentTransition->stepDelay;
-      root["transition][stepCount"] = gpCurrentTransition->stepCount;
+      root["transition][stepBrightness"] = gpCurrentTransition[index]->stepBrightness;
+      root["transition][stepDelay"] = gpCurrentTransition[index]->stepDelay;
+      root["transition][stepCount"] = gpCurrentTransition[index]->stepCount;
 
   }
   char buffer[root.measureLength() + 1];
   root.printTo(buffer, sizeof(buffer));
-
-  gMqttClient.publish(gConfLightStateTopic, buffer, true);
+  
+  gMqttClient.publish(gLedStrip[index].stateTopic, buffer, true);
 }
 
 /********************************** START RECONNECT*****************************************/
@@ -449,10 +514,15 @@ void reconnect() {
   while (!gMqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (gMqttClient.connect(SENSORNAME, gConfMqttUsername, gConfMqttPassword)) {
+    if (gMqttClient.connect(DEVICENAME, gConfMqttUsername, gConfMqttPassword)) {
       Serial.println("connected");
-      gMqttClient.subscribe(gConfLightSetTopic);
-      sendState();
+
+       /* subscribe to the MAX_ROOM_COUNT set topics */
+      uint8_t index = 0;
+      for(index=0;index< MAX_ROOM_COUNT;index++) {
+        gMqttClient.subscribe(gLedStrip[index].setTopic);
+        sendState(index);
+      }
     } else {
       Serial.print("failed, rc=");
       Serial.print(gMqttClient.state());
@@ -465,18 +535,18 @@ void reconnect() {
 
 
 /********************************** LED brightness setter**********************************/
-void setStrgConfIpAddressBrightness(int gCurrentBrightness)
-{
-  if (gCurrentBrightness > MAX_BRIGHTNESS_ALLOWED)
-    gCurrentBrightness = MAX_BRIGHTNESS_ALLOWED;
-
-  if (gCurrentBrightness > MAX_PWM_COMMAND)
-    gCurrentBrightness = MAX_PWM_COMMAND;
-
-  if (gCurrentBrightness <PWM_COMMANDED_ZERO_UNDER_COMMAND)
-    gCurrentBrightness = 0;
-
-  analogWrite(CORRIDOR_LAMP,gCurrentBrightness);
+void setLedStripBrightness(uint16_t newBrightness, uint8_t index) {
+    
+    if (newBrightness > MAX_BRIGHTNESS_ALLOWED)
+      newBrightness = MAX_BRIGHTNESS_ALLOWED;
+  
+    if (newBrightness > MAX_PWM_COMMAND)
+      newBrightness = MAX_PWM_COMMAND;
+  
+    if (newBrightness <PWM_COMMANDED_ZERO_UNDER_COMMAND)
+      newBrightness = 0;
+  
+    analogWrite(LUT_IndexToPin[index],newBrightness);
 }
 
 /********************************** START MAIN LOOP*****************************************/
@@ -490,12 +560,12 @@ void loop() {
                 gSpecialBrightness+=50;
                 if (gSpecialBrightness > MAX_PWM_COMMAND)
                   gSpecialBrightness = MAX_PWM_COMMAND;
-                setStrgConfIpAddressBrightness(gSpecialBrightness);
+                setLedStripBrightness(gSpecialBrightness,0);
               } else if (gSerialBuffer[gSerialBufferPos] == '-'){
                 gSpecialBrightness-=50;
                 if (gSpecialBrightness < PWM_COMMANDED_ZERO_UNDER_COMMAND)
                   gSpecialBrightness = 0 ;
-                setStrgConfIpAddressBrightness(gSpecialBrightness);
+                setLedStripBrightness(gSpecialBrightness,0);
               }                
               gSerialBufferPos = 0;
           }
@@ -509,7 +579,7 @@ void loop() {
               gSerialBuffer[gSerialBufferPos] = Serial.read();
               gSerialBufferPos++;
             if ( gSerialBuffer[gSerialBufferPos - 1] == '\n') { 
-              lightCommandCallback(gConfLightSetTopic,gSerialBuffer,gSerialBufferPos);
+              lightCommandCallback(gLedStrip[0].setTopic,gSerialBuffer,gSerialBufferPos);
               gSerialBufferPos = 0;
             }
           } else {
@@ -541,37 +611,46 @@ void loop() {
   }
 
   // are we processing a transition ?
-  if (gpCurrentTransition==NULL) {
+  uint8_t transitionIndex = 0;
+  bool isPowerStillNeeded = false;
+  for (transitionIndex = 0; transitionIndex < MAX_ROOM_COUNT; transitionIndex++) {
+    if (gpCurrentTransition[transitionIndex] ==NULL) {
     // no. Load one if available.
     //is there an available transition ?
-    if (!STAILQ_EMPTY(&transitionQueue)) {
-      // yes, load it
-      gpCurrentTransition = STAILQ_FIRST(&transitionQueue);
-      // and remove it from the queue 
-      STAILQ_REMOVE_HEAD(&transitionQueue, transitionEntry);
+      if (!STAILQ_EMPTY(&(gLedStrip[transitionIndex].transitionQueue))) {
+        // yes, load it
+        gpCurrentTransition[transitionIndex] = STAILQ_FIRST(&(gLedStrip[transitionIndex].transitionQueue));
+        // and remove it from the queue 
+        STAILQ_REMOVE_HEAD(&(gLedStrip[transitionIndex].transitionQueue), transitionEntry);
+      }
     }
-  }
 
-  //lets check again.
-  // are we processing a transition ?
-  if (!(gpCurrentTransition==NULL)) {
-    //yes. do it !
-    delay(gpCurrentTransition->stepDelay);
-    gCurrentBrightness += gpCurrentTransition->stepBrightness;
-    setStrgConfIpAddressBrightness(gCurrentBrightness);
-    // did we reach the end ?
-    if (gpCurrentTransition->stepCount == 0) {
-      // yes. Free the transition.
-      Serial.println("Stop Fading");
-      free(gpCurrentTransition);
-      gpCurrentTransition = NULL;
+    //lets check again.
+    // are we processing a transition ?
+    if (!(gpCurrentTransition[transitionIndex]==NULL)) {
+      delay(gpCurrentTransition[transitionIndex]->stepDelay);
+      gLedStrip[transitionIndex].currentBrightness += gpCurrentTransition[transitionIndex]->stepBrightness;
+      setLedStripBrightness(gLedStrip[transitionIndex].currentBrightness, transitionIndex);
+      // did we reach the end ?
+      if (gpCurrentTransition[transitionIndex]->stepCount == 0) {
+        // yes. Free the transition.
+        Serial.println("Stop Fading");
+        free(gpCurrentTransition[transitionIndex]);
+        gpCurrentTransition[transitionIndex] = NULL;
+      } else {
+        // no. Decrease step count
+        gpCurrentTransition[transitionIndex]->stepCount--;
+      }
     } else {
-      // no. Decrease step count
-      gpCurrentTransition->stepCount--;
-    }
+      // no transition available, do nothing. 
+    }  
+    //We want to check if power is still needed.
+    isPowerStillNeeded |= (gLedStrip[transitionIndex].currentBrightness > 0);
+  }
+  if (isPowerStillNeeded) {
+    setPowerOutput();
   } else {
-    // no transition available, do nothing. Not so fast though,
-    // we need some time to process the incoming data if it ever comes
-    delay (10);
+    cutPowerOutput(); 
   }
 }
+
