@@ -36,24 +36,24 @@ void toggleOnboardLed(void) {
 /********************************** PIN SETUP   ****************************************/
 void pinSetup() {
 // set all pins to output mode and state low
-  pinMode(D0,OUTPUT);
+  pinMode(D0,OUTPUT);         // pwm 1
   analogWrite(D0,0);
-  pinMode(D1,OUTPUT);
-  analogWrite(D1,0);
-  pinMode(D2,OUTPUT);
+  pinMode(D1,OUTPUT);         // enable pwm out. 
+  digitalWrite(D1,HIGH);      // this is connected to a NOT AND pin, so set it high at startup
+  pinMode(D2,OUTPUT);         // pwm 4
   analogWrite(D2,0);
-  pinMode(D3,OUTPUT);
-  analogWrite(D3,0);
-  pinMode(D4,OUTPUT);
-  analogWrite(D4,0);
-  pinMode(D5,OUTPUT);
+  pinMode(D3,OUTPUT);         // power on demand
+  digitalWrite(D3,LOW);       // set it to NO POWER on startup
+  pinMode(D4,OUTPUT);         // not used
+  digitalWrite(D4,LOW);
+  pinMode(D5,OUTPUT);         // pwm 2
   analogWrite(D5,0);
-  pinMode(D6,OUTPUT);
+  pinMode(D6,OUTPUT);         // pwm 3
   analogWrite(D6,0);
-  pinMode(D7,OUTPUT);
-  analogWrite(D7,0);
-  pinMode(D8,OUTPUT);
-  analogWrite(D8,0);
+  pinMode(D7,OUTPUT);         // not used
+  digitalWrite(D7,LOW);
+  pinMode(D8,OUTPUT);         // not used
+  digitalWrite(D8,LOW);
   
   // onboard led
   pinMode(LED_CARTE, OUTPUT);
