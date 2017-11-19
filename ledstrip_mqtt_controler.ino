@@ -17,8 +17,11 @@
 #include <PubSubClient.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+#include <TimeLib.h>
+#include <NtpClientLib.h>
 #include "settings.h"
 #include "globalVars.h"
+
 
 /******************************** TOGGLE ONBOARD LED ***********************************/
 void toggleOnboardLed(void) {
@@ -30,63 +33,8 @@ void toggleOnboardLed(void) {
   digitalWrite(LED_CARTE, gOnboardLedState); // Turn off the on-board LED
 }
 
-
-/******************************* NTP and timer management *****************************/
-
-uint32_t readNtpAnswer (void) {
-  // TODO read the buffer and return its value if an NTP answer is found
-  return 0; 
-}
-
-void sendNtpRequest (void) {
- // TODO send an NTP request
-  return;
-}
-
-void ntpTimerCallback(void *pArg) {
-  if (!gNtpRequestDone) {
-    sendNtpRequest();
-    gNtpRequestTryCount++;
-    gNtpRequestDone = TRUE;
-    // arm timer to trig again in 1 sec
-    os_timer_arm(gNtpTimer,1000,FALSE);
-  } else {
-    uint32_t currentTime = readNtpAnswer();
-    if (currentTime != 0) {
-      // we did read. set the time 
-      SetTime(currentTime);
-      //reset the count
-      gNtpRequestTryCount = 0;
-      // arm timer to trig again in 1 day
-      // TODO: do it once per day at a time fit to detect 
-      // summer/winter clock change  
-      os_timer_arm(gNtpTimer,86400000,FALSE);
-    } else if (gNtpRequestTryCount < 5) {
-      //increase gNtpRequestTryCount
-      gNtpRequestTryCount++;
-      // arm timer to trig again in 1 sec
-      os_timer_arm(gNtpTimer,1000,FALSE);
-    } else {
-      // we failed the read 5 times in a row
-      // meaning the request failed.
-      // reset requestTryCount and gNtpRequestDone
-      // try again in 10 minutes
-      gNtpRequestTryCount = 0;
-      gNtpRequestDone = FALSE;
-      os_timer_arm(gNtpTimer,600000,FALSE);
-    }
-  }
-}
-
-
-/********************************** START SETUP*****************************************/
-void setup() {
-
-  // serial
-  Serial.begin(115200);
-
-  //wifi not starting fix
-  WiFi.mode(WIFI_OFF);
+/********************************** PIN SETUP   ****************************************/
+void pinSetup() {
 // set all pins to output mode and state low
   pinMode(D0,OUTPUT);
   analogWrite(D0,0);
@@ -109,8 +57,22 @@ void setup() {
   
   // onboard led
   pinMode(LED_CARTE, OUTPUT);
+}  
+
+
+/********************************** START SETUP ****************************************/
+void setup() {
+
+  // serial
+  Serial.begin(115200);
+
+  //wifi not starting fix
+  WiFi.mode(WIFI_OFF);
   toggleOnboardLed();
 
+  // setup pins
+  pinSetup();
+  
   // scenario queue
   STAILQ_INIT(&transitionQueue);
   
@@ -144,10 +106,30 @@ void setup() {
    // wifi setup
   setup_wifi();
 
-  // NTP and time setup. Arm the timer to expire in 1 second.
-  os_timer_setfn(gNtpTimer, ntpTimerCallback, NULL);
-  os_timer_arm(gNtpTimer,1000,FALSE);
-   
+/******************************* NTP management **************************************/
+  // NTP and time setup.
+  // this one sets the NTP server as gConftimeServer with gmt+1
+  // and summer/winter mechanic (true)
+  NTP.begin(gConftimeServer, 1, true);
+  // set the system to do a sync every 86400 seconds when succesful, so once a day 
+  // if not successful, try syncing every 600s, so every 10 mins
+  NTP.setInterval(600,86400);  
+
+  NTP.onNTPSyncEvent([](NTPSyncEvent_t error) {
+  if (error) {
+    Serial.print("Time Sync error: ");
+    if (error == noResponse) {
+      Serial.println("NTP server not reachable");
+    } else if (error == invalidAddress) {
+      Serial.println("Invalid NTP server address");
+    }
+  } else {
+    setTime(NTP.getLastNTPSync());
+    Serial.print("Setting time to ");
+    Serial.println(NTP.getTimeDateString(NTP.getLastNTPSync()));
+  }
+});
+  
   // MQTT setup
   Serial.println("Wifi connected, reaching for MQTT server"); 
   gMqttClient.setServer(gConfMqttServerIp, gConfMqttPort);
@@ -293,7 +275,7 @@ void buildAndInsertScenario (int16_t targetBrightness,uint16_t transitionTimeMs,
     case LIGHT_BASED: /* this is the light based mode */
       break;
 
-    case CLOCK_AND_LIGHT_BASED /*  this is the clock and light based mode */
+    case CLOCK_AND_LIGHT_BASED: /*  this is the clock and light based mode */
       break;
 
     default: /* this is the manual mode */
@@ -361,7 +343,7 @@ bool processJson(char* message) {
   
   const char* res = root["state"];
   if (res) {
-    if (strcmp(root["state"], gConfOnCommand) == 0 )) {
+    if (strcmp(root["state"], gConfOnCommand) == 0 ) {
       Serial.println("State set ON");
       targetBrightness = MAX_BRIGHTNESS_ALLOWED;
       transitionPreset = CLOCK_BASED;
@@ -369,7 +351,7 @@ bool processJson(char* message) {
       Serial.println("State set and not ON, setting as OFF");
       transitionPreset = CLOCK_BASED;
     } 
-  } else {
+  } else { // if there is no STATE in the JSON
     res = root["transition"];
     if (!res) {
       Serial.println("No transition set");  
@@ -411,7 +393,7 @@ bool processJson(char* message) {
       Serial.println("Transition not specified");  
       transitionPreset= MANUAL;
     }
-   }
+   } // if there is transition in the JSON
 
    res = root["brightness"];
    if (res) {
@@ -421,14 +403,14 @@ bool processJson(char* message) {
        } else {
         targetBrightness = root["brightness"];
        }
-     } else {
+    } else { // if there is brightness in the json
       // if not specified, root brightness is 0
         Serial.print("No brightness specified");
         targetBrightness = 0;
         Serial.println(" set to 0");
-      }
-    }
+    } // if there is no brightness in the json
   }
+  
   // free the data in the queue 
   transitionQueueElem_t *pTransition = NULL;
   STAILQ_FOREACH(pTransition, &transitionQueue, transitionEntry) {

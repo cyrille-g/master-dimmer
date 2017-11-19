@@ -4,10 +4,12 @@
 #include <PubSubClient.h>
 #include <WiFiUdp.h>
 
+
+
 /******************************** structures**************************/
-typedef struct transitionQueueElem_s{
+typedef struct transitionQueueElem_s {
   int16_t  stepBrightness;
-  uint16_t stepDelay;  
+  uint16_t stepDelay;
   uint16_t stepCount;
   STAILQ_ENTRY(transitionQueueElem_s) transitionEntry;
 } transitionQueueElem_t;
@@ -17,12 +19,14 @@ transitionQueueElem_t *gpCurrentTransition = NULL;
 
 
 /******************************** queue system ***********************/
-typedef STAILQ_HEAD(,transitionQueueElem_s) transitionQueueHead_t;
+typedef STAILQ_HEAD(, transitionQueueElem_s) transitionQueueHead_t;
 transitionQueueHead_t transitionQueue;
 
 
 /******************************** hardware ***************************/
 int gOnboardLedState = HIGH;
+
+
 
 /******************************** network ****************************/
 WiFiClient   gEspClient;
@@ -44,9 +48,5 @@ const int JSON_BUFFER_SIZE = JSON_OBJECT_SIZE(10);
 int16_t gCurrentBrightness = 0;
 
 /**************************** NTP management **************************/
-
-os_timer_t gNtpTimer;
-bool_t gNtpRequestDone = FALSE ;
-uint8_t gNtpRequestTryCount = 0;
 
 #endif
