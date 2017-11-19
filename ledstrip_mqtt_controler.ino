@@ -62,7 +62,7 @@ void pinSetup() {
 void setPowerOutput(void) {
   digitalWrite(D3,HIGH); // power supply
   digitalWrite(D1,LOW);  // TC4469
-}
+} 
 
 void cutPowerOutput(void) {
   digitalWrite(D3,LOW);  // power supply
