@@ -28,6 +28,8 @@ bool gPowerNeeded = false;
 /******************************** network ****************************/
 WiFiClient   gEspClient;
 PubSubClient gMqttClient(gEspClient);
+ESP8266WebServer gServer(WEBSERVER_PORT);
+String gWebPage = "";
 
 
 /******************************** serial *****************************/
