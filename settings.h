@@ -63,7 +63,7 @@ const char* LUT_IndexToRoomName[MAX_ROOM_COUNT] = {"room1",
 const byte gConfMacAddress[] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };  
 #error "set mac address and remove this line"
 #define WEBSERVER_PORT 80
- 
+  
 /**************************************** TIME **************************************/
 const uint16_t gConfNtpServerPort = 123;
 const char gConftimeServer[] = "pool.ntp.org";
