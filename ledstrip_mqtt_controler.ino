@@ -22,7 +22,6 @@
 #include "settings.h"
 #include "globalVars.h"
 
-
 /******************************** TOGGLE ONBOARD LED ***********************************/
 void toggleOnboardLed(void) {
   if (gOnboardLedState == HIGH) {
@@ -31,6 +30,16 @@ void toggleOnboardLed(void) {
     gOnboardLedState = HIGH;
   }
   digitalWrite(LED_CARTE, gOnboardLedState); // Turn off the on-board LED
+}
+
+uint8_t getIndexFromRoomName(char *room) {
+  uint8_t index = 0;
+  for (index = 0;index <MAX_ROOM_COUNT; index++) {
+    if (strcmp (LUT_IndexToRoomName[index],room) == 0) {
+      break;
+    }
+  }
+  return index;
 }
 
 /********************************** PIN SETUP   ****************************************/
@@ -61,12 +70,86 @@ void pinSetup() {
 
 void setPowerOutput(void) {
   digitalWrite(D3,HIGH); // power supply
+  delay(20);
   digitalWrite(D1,LOW);  // TC4469
 } 
 
 void cutPowerOutput(void) {
-  digitalWrite(D3,LOW);  // power supply
   digitalWrite(D1,HIGH); // TC4469
+  delay(20);
+  digitalWrite(D3,LOW);  // power supply
+}
+
+/* -------------------------------------WEBSERVER HANDLERS ------------------------*/
+
+void handleRoot(void) {
+  if (gDebugMode) {
+    gWebServer.send(200, "text/plain", "Debug state: ON\n" + gRootWebserverMsg );  
+  } else {
+    gWebServer.send(200, "text/plain", "Debug state: OFF\n" + gRootWebserverMsg );  
+  }
+}
+
+
+void handlePwm(void) {
+  if (gWebServer.args() != 1) {
+    handleStop();
+    return;
+  } 
+  gDebugMode = true;
+  char *pwmName = const_cast<char *>(gWebServer.argName(0).c_str());
+  uint8_t pwmIndex = getIndexFromRoomName(pwmName);
+  uint16_t pwmValue = gWebServer.arg(0).toInt();
+  if (pwmValue > MAX_PWM_COMMAND)
+    pwmValue = MAX_PWM_COMMAND;
+    
+  analogWrite(LUT_IndexToPin[pwmIndex], pwmValue);
+  gWebServer.send(200, "text/plain", LUT_IndexToPin[pwmIndex] + "commanded to " + pwmValue);
+}
+
+void handlePowerOn(void) {
+  gDebugMode = true;
+  digitalWrite(D3, HIGH );
+  gWebServer.send(200, "text/plain", "Power on demand ON");
+}
+
+void handlePowerOff(void) {
+  gDebugMode = true;
+  /* first cut TC4469 poweroutput */
+  digitalWrite(D1, HIGH );
+  delay(100);
+  
+  /* then cut the power on demand */
+  digitalWrite(D3, LOW );
+  gWebServer.send(200, "text/plain", "Power on demand OFF");
+}
+void handleTc4469EnableOutput(void) {
+  gDebugMode = true;
+  digitalWrite(D1, LOW );
+  gWebServer.send(200, "text/plain", "TC4469 enable output");
+}
+
+void handleTc4469DisableOutput(void) {
+  gDebugMode = true;
+  digitalWrite(D1, HIGH );
+  gWebServer.send(200, "text/plain", "TC4469 disable output");
+}
+
+void handleStop(void) {
+  uint8 index = 0;
+  digitalWrite(D1, HIGH );
+  digitalWrite(D3, LOW );
+  for (index = 0; index < MAX_ROOM_COUNT; index++) {
+  analogWrite(LUT_IndexToPin[index], 0);
+  gDebugMode = false;
+  }
+  gWebServer.send(200, "text/plain", "Power on demand cut, tc4469 output disabled, all pwm set to 0");
+}
+
+void handleReset (void) {
+  gWebServer.send(200, "text/plain", "Resetting in 1s");
+  delay(1000);
+  ESP.reset();
 }
 
 
@@ -86,6 +169,7 @@ void setup() {
   // Init scenario queues
   int index=0;
   size_t topicSize = 0;
+  Serial.println("MQTT set topics");
   for(index=0;index<MAX_ROOM_COUNT;index++) {
     STAILQ_INIT(&(gLedStrip[index].transitionQueue));
     /* init MQTT set and state topic: get the size first. do not forget trailing \0 and the 2 slashes */
@@ -96,6 +180,8 @@ void setup() {
     topicSize = strlen (MQTT_PREFIX) + strlen (LUT_IndexToRoomName[index]) + strlen (MQTT_SET) + 3; 
     gLedStrip[index].setTopic = (char *)malloc(topicSize);
     sprintf(gLedStrip[index].setTopic,"%s/%s/%s",MQTT_PREFIX,LUT_IndexToRoomName[index],MQTT_SET);
+
+    Serial.println(gLedStrip[index].setTopic);
   }
   
   byte received= 0;
@@ -150,6 +236,17 @@ void setup() {
     Serial.println(NTP.getTimeDateString(NTP.getLastNTPSync()));
   }
 });
+
+  // Webserver setup
+  gWebServer.on("/",handleRoot);
+  gWebServer.on("/pwm",handlePwm);
+  gWebServer.on("/podon",handlePowerOn);
+  gWebServer.on("/podoff",handlePowerOff);
+  gWebServer.on("/pwmenable",handleTc4469EnableOutput);
+  gWebServer.on("/pwmdisable",handleTc4469DisableOutput);
+  gWebServer.on("/stop",handleStop);
+  gWebServer.on("/reset",handleReset);
+  gWebServer.begin(); 
   
   // MQTT setup
   Serial.println("Wifi connected, reaching for MQTT server"); 
@@ -158,7 +255,6 @@ void setup() {
 
   //OTA setup
   ArduinoOTA.setPort(OTAPORT);
-  // Hostname defaults to esp8266-[ChgConfIpAddressID]
   ArduinoOTA.setHostname(DEVICENAME);
 
   // No authentication by default
@@ -496,12 +592,12 @@ void sendState(uint8_t index) {
 
   JsonObject& root = jsonBuffer.createObject();
     root["CurrentBrightness"] = gLedStrip[index].currentBrightness;
-    if (gpCurrentTransition!= NULL) {
+    if (gpCurrentTransition[index]!= NULL) {
       root["transition][stepBrightness"] = gpCurrentTransition[index]->stepBrightness;
       root["transition][stepDelay"] = gpCurrentTransition[index]->stepDelay;
       root["transition][stepCount"] = gpCurrentTransition[index]->stepCount;
+    }
 
-  }
   char buffer[root.measureLength() + 1];
   root.printTo(buffer, sizeof(buffer));
   
@@ -610,6 +706,11 @@ void loop() {
     ArduinoOTA.handle();
   }
 
+  gWebServer.handleClient();
+  /* we do not want to process anything in debug mode */
+  if (gDebugMode)
+    return;
+    
   // are we processing a transition ?
   uint8_t transitionIndex = 0;
   bool isPowerStillNeeded = false;

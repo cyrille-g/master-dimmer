@@ -1,12 +1,13 @@
-#ifndef SETTINGS_H
-#define SETTINGS_H
+#ifndef _CGE_SETTINGS_H
+#define _CGE_SETTINGS_H
+
 /* DEFINES */
 
 
 /**************************** OTA **************************************************/
-#define DEVICENAME "sensorname" //change this to whatever you want to call your device
-#define OTAPASSWORD "OTApwd" //the gConfPassword you will need to enter to upload remotely via the ArduinoIDE
-#define OTAPORT 880
+#define DEVICENAME "dimmerdriver" //change this to whatever you want to call your device
+#define OTAPASSWORD "otapwd" //the gConfPassword you will need to enter to upload remotely via the ArduinoIDE
+#define OTAPORT 8800
 
 /******************************* MQTT **********************************************/
 #define MQTT_MAX_PACKET_SIZE 512
@@ -38,11 +39,11 @@ uint8_t LUT_IndexToPin[MAX_ROOM_COUNT] = {D0,D5,D6, D2};
 
 /************ WIFI and MQTT Information (CHANGE THESE FOR YOUR SETUP) **************/
 const char* gConfSsid = "ssid"; //type your WIFI information inside the quotes
-const char* gConfPassword = "wifipwd";
-const char* gConfMqttServerIp = "192.168.200.200";
-const char* gConfMqttUsername = "mqttUsername";
-const char* gConfMqttPassword = "mqttPassword";
-const uint8_t gConfMqttPort = 1883;
+const char* gConfPassword = "pwd";
+const char* gConfMqttServerIp = "192.168.0.2";
+const char* gConfMqttUsername = "mqttuser";
+const char* gConfMqttPassword = "mqttpwd";
+const int   gConfMqttPort = 1883;
 
 /************* MQTT TOPICS (change these topics as you wish)  **********************/
 #define MQTT_PREFIX "light"
@@ -51,32 +52,42 @@ const uint8_t gConfMqttPort = 1883;
 const char* gConfOnCommand = "ON";
 const char* gConfOffCommand = "OFF";
 
-const char* LUT_IndexToRoomName[MAX_ROOM_COUNT] = {"corridor",
-                                                   "toilet",
-                                                   "bedroom",
-                                                   "kitchen"};
-
+const char* LUT_IndexToRoomName[MAX_ROOM_COUNT] = {"room1",
+                                                   "room2",
+                                                   "room3",
+                                                   "room4"};
 
 /**************************************** NETWORK **********************************/
 
 // the media access control (ethernet hardware) address for the shield:
-const uint8_t gConfMacAddress[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };  
-//the IP address for the shield:
-const uint8_t gConfIpAddress[] = { 192, 168, 4, 166 };   
-
-
+const byte gConfMacAddress[] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };  
+#error "set mac address and remove this line"
+#define WEBSERVER_PORT 80
+ 
 /**************************************** TIME **************************************/
-uint16_t gConfNtpServerPort = 4567; 
-char gConftimeServer[] = "fr.pool.ntp.org";
+const uint16_t gConfNtpServerPort = 123;
+const char gConftimeServer[] = "pool.ntp.org";
 
 
 /****************************** TIME BASED TRANSITION*********************************/
 
-uint8_t gConfAutoDimStartHour = 22 ; // "time to start dimming" hour. Dimming will start from now.
-uint8_t gConfHourOfInflexion = 4  ; // "pitch blackest time of your night" hour. The closer to this hour, the dimmer the light.
-uint8_t gConfAutoDimStopHour = 10 ; // "time to stop dimming" hour. Dimming will be back to normal at that time.
-uint16_t gConfMaxDimmedBrightness = 300;  // this brightness is achieved at gConfHourOfInflexion
-uint16_t gConfMaxDimmedTransitionTime = 8000;  // this time will be used at gConfHourOfInflexion
+const uint8_t gConfAutoDimStartHour = 22 ; // "time to start dimming" hour. Dimming will start from now.
+const uint8_t gConfHourOfInflexion = 4  ; // "pitch blackest time of your night" hour. The closer to this hour, the dimmer the light.
+const uint8_t gConfAutoDimStopHour = 10 ; // "time to stop dimming" hour. Dimming will be back to normal at that time.
+const uint16_t gConfMaxDimmedBrightness = 300;  // this brightness is achieved at gConfHourOfInflexion
+const uint16_t gConfMaxDimmedTransitionTime = 8000;  // this time will be used at gConfHourOfInflexion
 
+/********************************** WEBSERVER ****************************************/
+const String gRootWebserverMsg =  
+"Any pCommand sets debug mode ON. Dimmer will not process any wifi switch command in debug mode\n"
+"stop and reset set debug mode OFF.\n\n"
+"Command list:\n"
+"/pwm?roomname=pwmValue : set pwm command for selected room\n"
+"/podon: enable power supply 12V out\n"
+"/podoff: disable power supply 12V out and tc4469 power output (also cuts TC4469 power)\n"
+"/pwmenable: enable tc4469 power output at the pin. Needs podon before \n"
+"/pwmdisable: disable tc4469 power output\n"
+"/stop: stop debug mode\n"
+"/reset: call ESP.reset\n";
 
 #endif

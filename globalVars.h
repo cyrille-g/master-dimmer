@@ -1,6 +1,8 @@
-#ifndef GLOBAL_VARS_H
-#define GLOBAL_VARS_H
+#ifndef _CGE_GLOBAL_VARS_H
+#define _CGE_GLOBAL_VARS_H
+
 #include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
 #include <PubSubClient.h>
 #include <WiFiUdp.h>
 
@@ -28,7 +30,10 @@ bool gPowerNeeded = false;
 /******************************** network ****************************/
 WiFiClient   gEspClient;
 PubSubClient gMqttClient(gEspClient);
+ESP8266WebServer gWebServer(WEBSERVER_PORT);
 
+/******************************* debug mode **************************/
+bool    gDebugMode = false;
 
 /******************************** serial *****************************/
 bool    gSerialMode = false;
@@ -51,6 +56,5 @@ typedef struct {
 
 roomLight_t gLedStrip[MAX_ROOM_COUNT];
 
-/**************************** NTP management **************************/
 
 #endif
