@@ -63,7 +63,7 @@ const char* LUT_IndexToRoomName[MAX_ROOM_COUNT] = {"corridor",
 const uint8_t gConfMacAddress[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };  
 //the IP address for the shield:
 const uint8_t gConfIpAddress[] = { 192, 168, 4, 166 };   
-
+#define WEBSERVER_PORT 80
 
 /**************************************** TIME **************************************/
 uint16_t gConfNtpServerPort = 4567; 
