@@ -34,7 +34,7 @@ ESP8266WebServer gWebServer(WEBSERVER_PORT);
 
 /******************************* debug mode **************************/
 bool    gDebugMode = false;
-
+String  gStatus;
 /******************************** serial *****************************/
 bool    gSerialMode = false;
 byte    gSerialBuffer[SERIAL_BUFFER_SIZE];

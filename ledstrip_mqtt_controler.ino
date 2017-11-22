@@ -100,11 +100,56 @@ void handlePwm(void) {
   char *pwmName = const_cast<char *>(gWebServer.argName(0).c_str());
   uint8_t pwmIndex = getIndexFromRoomName(pwmName);
   uint16_t pwmValue = gWebServer.arg(0).toInt();
-  if (pwmValue > MAX_PWM_COMMAND)
+  if (pwmValue > MAX_PWM_COMMAND) {
     pwmValue = MAX_PWM_COMMAND;
+    }
     
   analogWrite(LUT_IndexToPin[pwmIndex], pwmValue);
-  gWebServer.send(200, "text/plain", LUT_IndexToPin[pwmIndex] + "commanded to " + pwmValue);
+  String webServerAnswer = "index" + pwmIndex ;
+  webServerAnswer += "room";  
+  webServerAnswer += LUT_IndexToRoomName[pwmIndex] ;
+  webServerAnswer +=  "commanded to " + pwmValue ;
+  gWebServer.send(200, "text/plain", webServerAnswer.c_str());
+      
+}
+
+
+void handlePwm1(void) {
+  gDebugMode = true;
+  analogWrite(LUT_IndexToPin[0], 200);
+  gWebServer.send(200, "text/plain", "pwm1 commanded to 200");
+}
+
+void handlePwm2(void) {
+  gDebugMode = true;
+  analogWrite(LUT_IndexToPin[1], 200);
+  gWebServer.send(200, "text/plain", "pwm2 commanded to 200");
+}
+void handlePwm3(void) {
+  gDebugMode = true;
+  analogWrite(LUT_IndexToPin[2], 200);
+  gWebServer.send(200, "text/plain", "pwm3 commanded to 200");
+      
+}
+
+void handlePwm4(void) {
+  gDebugMode = true;
+  analogWrite(LUT_IndexToPin[3], 200);
+  gWebServer.send(200, "text/plain", "pwm4 commanded to 200");      
+}
+
+void handleStatus(void) {
+  gStatus = "status\n";
+int index =0;
+for(index=0;index<MAX_ROOM_COUNT;index++){
+  gStatus.concat(gLedStrip[index].currentBrightness);
+  gStatus.concat("\n");
+  gStatus.concat(gLedStrip[index].setTopic);
+  gStatus.concat("\n");
+  gStatus.concat(gLedStrip[index].stateTopic);
+  gStatus.concat("\n");
+}
+  gWebServer.send(200, "text/plain", gStatus.c_str());
 }
 
 void handlePowerOn(void) {
@@ -239,13 +284,18 @@ void setup() {
 
   // Webserver setup
   gWebServer.on("/",handleRoot);
-  gWebServer.on("/pwm",handlePwm);
+//  gWebServer.on("/pwm",handlePwm);
+  gWebServer.on("/pwm1",handlePwm1);
+  gWebServer.on("/pwm2",handlePwm2);
+  gWebServer.on("/pwm3",handlePwm3);
+  gWebServer.on("/pwm4",handlePwm4);
   gWebServer.on("/podon",handlePowerOn);
   gWebServer.on("/podoff",handlePowerOff);
   gWebServer.on("/pwmenable",handleTc4469EnableOutput);
   gWebServer.on("/pwmdisable",handleTc4469DisableOutput);
   gWebServer.on("/stop",handleStop);
   gWebServer.on("/reset",handleReset);
+  gWebServer.on("/status",handleStatus);
   gWebServer.begin(); 
   
   // MQTT setup
@@ -362,6 +412,9 @@ void lightCommandCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.print("] ");
 
+  char *topicToTokenize = (char*) malloc (strlen(topic) + 1);
+    strcpy(topicToTokenize,topic);
+  
   char message[length + 1];
   for (int i = 0; i < length; i++) {
     message[i] = (char)payload[i];
@@ -373,18 +426,32 @@ void lightCommandCallback(char* topic, byte* payload, unsigned int length) {
   char *token;
    
   /* get the first token */
-  token = strtok(topic, "/");
+  token = strtok(topicToTokenize, "/");
 
    // does it start with MQTT_PREFIX ?
-  if ((token != NULL ) && strcmp(token,MQTT_PREFIX) != 0) {
+  if (token == NULL ) {
+    //no; leave
+    Serial.println("No /");
+    return;
+  }
+  
+  if (strcmp(token,MQTT_PREFIX) != 0) {
     //no; leave
     Serial.println("wrong MQTT prefix");
     return;
   }
-  token = strtok(NULL, topic);
+  token = strtok(NULL, "/");
+  if (token == NULL) {
+    Serial.println("wrong MQTT topic");
+    return;
+  }
   uint8_t index = 0;
+  Serial.print("looking for ");
+  Serial.println(token);
   // does it name a known room ?
   for (index=0; index < MAX_ROOM_COUNT; index++) {
+     Serial.print("compare to ");
+     Serial.println(LUT_IndexToRoomName[index]);
     if (strcmp(LUT_IndexToRoomName[index], token) == 0) {
        // found a match, so we break out of it.
       break;
@@ -397,15 +464,20 @@ void lightCommandCallback(char* topic, byte* payload, unsigned int length) {
     return;
   }
 
-  token = strtok(NULL, topic);
-  // does it end with MQTT_POWER ?
+  token = strtok(NULL, "/");
+  if (token == NULL) {
+    Serial.println("wrong MQTT_SET");
+    return;
+  }
+
+  // does it end with MQTT_SET ?
   if (strcmp(token , MQTT_SET) != 0)  {
     Serial.println("Unknown power suffix");
     return;
   }
 
   // there should not be any data left
-  token = strtok(NULL, topic);
+  token = strtok(NULL, "/");
   if (token != NULL) {
     Serial.println("Topic too long");
     return;
@@ -669,23 +741,21 @@ void loop() {
       }
     } else if (gSerialMode) {
     if (Serial.available()) {
-      if (gpCurrentTransition == NULL) {
-        while(Serial.available()) {
-          if (gSerialBufferPos < (SERIAL_BUFFER_SIZE -1)) {
-              gSerialBuffer[gSerialBufferPos] = Serial.read();
-              gSerialBufferPos++;
-            if ( gSerialBuffer[gSerialBufferPos - 1] == '\n') { 
-              lightCommandCallback(gLedStrip[0].setTopic,gSerialBuffer,gSerialBufferPos);
-              gSerialBufferPos = 0;
-            }
-          } else {
-            Serial.read();
+      while(Serial.available()) {
+        if (gSerialBufferPos < (SERIAL_BUFFER_SIZE -1)) {
+            gSerialBuffer[gSerialBufferPos] = Serial.read();
+            gSerialBufferPos++;
+          if ( gSerialBuffer[gSerialBufferPos - 1] == '\n') { 
+            Serial.print("send to topic ");
+            Serial.println(gLedStrip[1].setTopic);
+            lightCommandCallback(gLedStrip[1].setTopic,gSerialBuffer,gSerialBufferPos);
             gSerialBufferPos = 0;
-            break;
           }
+        } else {
+          Serial.read();
+          gSerialBufferPos = 0;
+          break;
         }
-      } else {
-        Serial.read();
       }
     }
   }

@@ -1,5 +1,5 @@
-#ifndef _CGE_SETTINGS_H
-#define _CGE_SETTINGS_H
+#ifndef _CGE_SETTINGS_EMPTY_H
+#define _CGE_SETTINGS_EMPTY_H
 
 /* DEFINES */
 
@@ -60,10 +60,11 @@ const char* LUT_IndexToRoomName[MAX_ROOM_COUNT] = {"room1",
 /**************************************** NETWORK **********************************/
 
 // the media access control (ethernet hardware) address for the shield:
-const byte gConfMacAddress[] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };  
+const byte gConfMacAddress[] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF }; 
 #error "set mac address and remove this line"
+ 
 #define WEBSERVER_PORT 80
-  
+
 /**************************************** TIME **************************************/
 const uint16_t gConfNtpServerPort = 123;
 const char gConftimeServer[] = "pool.ntp.org";
@@ -82,12 +83,17 @@ const String gRootWebserverMsg =
 "Any pCommand sets debug mode ON. Dimmer will not process any wifi switch command in debug mode\n"
 "stop and reset set debug mode OFF.\n\n"
 "Command list:\n"
-"/pwm?roomname=pwmValue : set pwm command for selected room\n"
+"/pwm1: set pwm command at 200 for pwm1\n"
+"/pwm2: set pwm command at 200 for pwm2\n"
+"/pwm3: set pwm command at 200 for pwm3\n"
+"/pwm4: set pwm command at 200 for pwm4\n"
 "/podon: enable power supply 12V out\n"
 "/podoff: disable power supply 12V out and tc4469 power output (also cuts TC4469 power)\n"
 "/pwmenable: enable tc4469 power output at the pin. Needs podon before \n"
 "/pwmdisable: disable tc4469 power output\n"
 "/stop: stop debug mode\n"
-"/reset: call ESP.reset\n";
+"/reset: call ESP.reset\n"
+"/status: show each brightness value and MQTT set topic";
 
-#endif
+
+#endif 
