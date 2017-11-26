@@ -32,7 +32,7 @@ void toggleOnboardLed(void) {
   digitalWrite(LED_CARTE, gOnboardLedState); // Turn off the on-board LED
 }
 
-uint8_t getIndexFromRoomName(char *room) {
+uint8_t getIndexFromRoomName(const char *room) {
   uint8_t index = 0;
   for (index = 0; index < MAX_ROOM_COUNT; index++) {
     if (strcmp (LUT_IndexToRoomName[index], room) == 0) {
@@ -152,18 +152,35 @@ void handlePwm(void) {
     return;
   }
   gDebugMode = true;
-  char *pwmName = const_cast<char *>(gWebServer.argName(0).c_str());
+  String roomToCommand(gWebServer.argName(0));
+  const char* pwmName = roomToCommand.c_str();
   uint8_t pwmIndex = getIndexFromRoomName(pwmName);
+
+  if (pwmIndex >= MAX_ROOM_COUNT) {
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"Cannot find room %s", pwmName);
+  addLog(gLogBuffer);
+  gWebServer.send(200, "text/plain", gLogBuffer);
+  return;
+#endif
+  }
   uint16_t pwmValue = gWebServer.arg(0).toInt();
   if (pwmValue > MAX_PWM_COMMAND) {
     pwmValue = MAX_PWM_COMMAND;
   }
 
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"External pwm setting for room name %s index %d = %d", pwmName,pwmIndex, pwmValue);
+  addLog(gLogBuffer);
+#endif
+
   analogWrite(LUT_IndexToPin[pwmIndex], pwmValue);
-  String webServerAnswer = "index" + pwmIndex ;
-  webServerAnswer += "room";
-  webServerAnswer += LUT_IndexToRoomName[pwmIndex] ;
-  webServerAnswer +=  "commanded to " + pwmValue ;
+  String webServerAnswer("index ");
+  webServerAnswer.concat(pwmIndex);
+  webServerAnswer.concat(" room ");
+  webServerAnswer.concat(LUT_IndexToRoomName[pwmIndex]);
+  webServerAnswer.concat(" commanded to ");
+  webServerAnswer.concat(pwmValue);
   gWebServer.send(200, "text/plain", webServerAnswer.c_str());
 
 }
@@ -353,7 +370,7 @@ void setup() {
 
     // Webserver setup
     gWebServer.on("/", handleRoot);
-    //  gWebServer.on("/pwm",handlePwm);
+    gWebServer.on("/pwm",handlePwm);
     gWebServer.on("/pwm1", handlePwm1);
     gWebServer.on("/pwm2", handlePwm2);
     gWebServer.on("/pwm3", handlePwm3);

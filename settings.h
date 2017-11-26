@@ -71,6 +71,9 @@ const char* LUT_IndexToRoomName[MAX_ROOM_COUNT] = {"room1",
 // the media access control (ethernet hardware) address for the shield:
 const byte gConfMacAddress[] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF }; 
 
+ 
+
+
 /**************************************** TIME **************************************/
 const uint16_t gConfNtpServerPort = 123;
 const char gConftimeServer[] = "pool.ntp.org";
@@ -92,17 +95,18 @@ const String gRootWebserverMsg =
 "Any pCommand sets debug mode ON. Dimmer will not process any wifi switch command in debug mode\n"
 "stop and reset set debug mode OFF.\n\n"
 "Command list:\n"
-"/pwm1: set pwm command at 200 for pwm1\n"
-"/pwm2: set pwm command at 200 for pwm2\n"
-"/pwm3: set pwm command at 200 for pwm3\n"
-"/pwm4: set pwm command at 200 for pwm4\n"
+"/status: show each room info, power enabler pin states, last 2 JSON commands and logs\n\n"
 "/podon: enable power supply 12V out\n"
 "/podoff: disable power supply 12V out and tc4469 power output (also cuts TC4469 power)\n"
 "/pwmenable: enable tc4469 power output at the pin. Needs podon before \n"
 "/pwmdisable: disable tc4469 power output\n"
+"/pwm?roomname=xxx: set \"roomname\" pwm to \"xxx\". does nothing if roomname is unknown."
+"It will do nothing visible if /podon and /pwmenable are not sent first \n"
+"/pwm1: set pwm command at 200 for pwm1\n"
+"/pwm2: set pwm command at 200 for pwm2\n"
+"/pwm3: set pwm command at 200 for pwm3\n"
+"/pwm4: set pwm command at 200 for pwm4\n\n"
 "/stop: stop debug mode\n"
-"/reset: call ESP.reset\n"
-"/status: show each brightness value and MQTT set topic";
-
+"/reset: call ESP.reset\n";
 
 #endif 
