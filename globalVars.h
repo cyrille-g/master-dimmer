@@ -16,25 +16,37 @@ typedef struct transitionQueueElem_s {
   STAILQ_ENTRY(transitionQueueElem_s) transitionEntry;
 } transitionQueueElem_t;
 
-transitionQueueElem_t *gpCurrentTransition[MAX_ROOM_COUNT] = {NULL};
+transitionQueueElem_t *gpCurrentTransition[MAX_ROOM_COUNT] = {NULL,NULL,NULL,NULL};
 
-
+typedef struct weblogQueueElem_s {
+  char *pLogLine;
+  STAILQ_ENTRY(weblogQueueElem_s) logEntry;
+} weblogQueueElem_t;
 
 /******************************** queue system ***********************/
 typedef STAILQ_HEAD(, transitionQueueElem_s) transitionQueueHead_t;
-
+typedef STAILQ_HEAD(, weblogQueueElem_s) weblogQueueHead_t;
 
 /******************************** hardware ***************************/
 int gOnboardLedState = HIGH;
 bool gPowerNeeded = false;
+bool gPrevPowerNeeded = false;
+bool gOtaUpdating = false;
 /******************************** network ****************************/
 WiFiClient   gEspClient;
 PubSubClient gMqttClient(gEspClient);
 ESP8266WebServer gWebServer(WEBSERVER_PORT);
 
-/******************************* debug mode **************************/
+/******************************* debug  ******************************/
 bool    gDebugMode = false;
 String  gStatus;
+String  gLastCommand;
+String  gSecondLastCommand;
+
+weblogQueueHead_t gLogQueue;
+uint8_t gWeblogCount;
+char gLogBuffer[LOG_BUFFER_SIZE] = {0};
+
 /******************************** serial *****************************/
 bool    gSerialMode = false;
 byte    gSerialBuffer[SERIAL_BUFFER_SIZE];
@@ -55,6 +67,5 @@ typedef struct {
 } roomLight_t;
 
 roomLight_t gLedStrip[MAX_ROOM_COUNT];
-
 
 #endif
