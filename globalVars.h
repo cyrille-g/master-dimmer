@@ -13,6 +13,7 @@ typedef struct transitionQueueElem_s {
   int16_t  stepBrightness;
   uint16_t stepDelay;
   uint16_t stepCount;
+  uint16_t targetBrightness;
   STAILQ_ENTRY(transitionQueueElem_s) transitionEntry;
 } transitionQueueElem_t;
 

@@ -607,28 +607,45 @@ void lightCommandCallback(char* topic, byte* payload, unsigned int length) {
   sendState(index);
 }
 
+void emptyScenarioQueue(uint8_t index) {
+ // free the data in the queue
+  transitionQueueElem_t *pTransition = NULL;
+  STAILQ_FOREACH(pTransition, &(gLedStrip[index].transitionQueue), transitionEntry) {
+    STAILQ_REMOVE_HEAD(&(gLedStrip[index].transitionQueue), transitionEntry);
+    free(pTransition);
+  } 
+}
+
+/***************************** linear scenario builder *******************************************/
+transitionQueueElem_t * buildLinearScenario (int16_t startingBrightness, int16_t targetBrightness, uint16_t transitionTimeMs) {
+
+  // we want the max stepCount we can, so it depends wether transition time
+  // or brightness count is higher.
+  // we might want to set a minimum delay or minimum brightness step
+  // so account for that
+  transitionQueueElem_t *pTransition = (transitionQueueElem_t *)malloc(sizeof(transitionQueueElem_t));
+
+  if ((abs(targetBrightness - startingBrightness) / MIN_STEP_BRIGHTNESS) > (transitionTimeMs / MIN_STEP_DELAY)) {
+    //we can do more than 1 brightness step per delay step ms. set stepDelay to that time
+    pTransition->stepDelay = MIN_STEP_DELAY;
+    pTransition->stepCount = transitionTimeMs / pTransition->stepDelay;
+    pTransition->stepBrightness = (targetBrightness - startingBrightness) / pTransition->stepCount;
+  } else {
+    //we cannot. brightness difference is the limiting factor.
+    pTransition->stepCount = abs(targetBrightness - startingBrightness) / MIN_STEP_BRIGHTNESS;
+    pTransition->stepDelay = transitionTimeMs / pTransition->stepCount ;
+    pTransition->stepBrightness = (targetBrightness > startingBrightness) ? MIN_STEP_BRIGHTNESS : -MIN_STEP_BRIGHTNESS;
+
+  }
+  /* whichever, save target brightness in the transition */
+  pTransition->targetBrightness = targetBrightness;
+
+  return pTransition;
+}
+
+
 /****************** scenario builder from JSON *******************************************/
 void buildAndInsertScenario (int16_t targetBrightness, uint16_t transitionTimeMs, uint8_t transitionPreset, uint8_t index) {
-
-  // TODO
-  // right now the preset is not used. Code it when time and light sensor is available
-  switch (transitionPreset) {
-
-    case CLOCK_BASED: /* this is the clock based mode */
-      /* in clock based mode, the more it gets near a set hour,
-        the dimmer the light,
-        the longer the transition */
-      break;
-
-    case LIGHT_BASED: /* this is the light based mode */
-      break;
-
-    case CLOCK_AND_LIGHT_BASED: /*  this is the clock and light based mode */
-      break;
-
-    default: /* this is the manual mode */
-      break;
-  }
 
 #ifdef WEB_DEBUG
   sprintf(gLogBuffer,"scenario: brightness from %d to %d transition time %d preset %d room index %d",
@@ -647,40 +664,85 @@ void buildAndInsertScenario (int16_t targetBrightness, uint16_t transitionTimeMs
   Serial.println(transitionPreset, DEC);
 #endif
 
-  /* first check if there is even a transition to do ... */
-  if (targetBrightness == gLedStrip[index].currentBrightness) {
-    /* none ! So do nothing */
-    return;
+  /* first find where to start. 
+   *  If there is a transition in the queue use the last inserted;
+   *  If there is none, check if there is a transition playing;
+   *  If there is none either, use the current state
+   */
+  int16_t startingBrightness = 0;
+  transitionQueueElem_t *pBaseState = NULL;
+  if (!STAILQ_EMPTY(&(gLedStrip[index].transitionQueue))) {
+    /* yes, load the last inserted as reference */
+    // does not work right now, missing implementation of __offsetof in arduino core 3.2.0
+    // workaround since i know the structure size
+#define  MY_STAILQ_LAST(head, type)          \
+    (STAILQ_EMPTY((head)) ?           \
+     NULL :             \
+     ((struct type *)(void *)       \
+((char *)((head)->stqh_last) - 8)))
+    
+    pBaseState = MY_STAILQ_LAST(&(gLedStrip[index].transitionQueue),transitionQueueElem_s);
+    
+    startingBrightness = pBaseState->targetBrightness;
+  } else if (gpCurrentTransition[index] != NULL) {
+      /* yes, use the current playing scenario target */
+     pBaseState = gpCurrentTransition[index];
+     startingBrightness = pBaseState->targetBrightness;
+  } else {
+    /* nothing playing. Use current */
+    startingBrightness = gLedStrip[index].currentBrightness;
+  }
+  
+   /* check if there is a transition to do */
+  if (targetBrightness == startingBrightness) {
+  /* none ! So do nothing */
+     return;
   }
     
+  /* clear any remaining or playing transition */
+  if (gpCurrentTransition[index] != NULL) {
+    free (gpCurrentTransition[index]);
+    gpCurrentTransition[index] = NULL;
+  }
+  emptyScenarioQueue(index);
 
-  // we want the max stepCount we can, so it depends wether transition time
-  // or brightness count is higher.
-  // we might want to set a minimum delay or minimum brightness step
-  // so account for that
-  transitionQueueElem_t *pTransition = (transitionQueueElem_t *)malloc(sizeof(transitionQueueElem_t));
+  /* TODO */
+  /* right now the preset is not used. Code it when time and light sensor is available */
 
-  if ((abs(targetBrightness - gLedStrip[index].currentBrightness) / MIN_STEP_BRIGHTNESS) > (transitionTimeMs / MIN_STEP_DELAY)) {
-    //we can do more than 1 brightness step per delay step ms. set stepDelay to that time
-    pTransition->stepDelay = MIN_STEP_DELAY;
-    pTransition->stepCount = transitionTimeMs / pTransition->stepDelay;
-    pTransition->stepBrightness = (targetBrightness - gLedStrip[index].currentBrightness) / pTransition->stepCount;
-  } else {
-    //we cannot. brightness difference is the limiting factor.
-    pTransition->stepCount = abs(targetBrightness - gLedStrip[index].currentBrightness) / MIN_STEP_BRIGHTNESS;
-    pTransition->stepDelay = transitionTimeMs / pTransition->stepCount ;
-    pTransition->stepBrightness = (targetBrightness > gLedStrip[index].currentBrightness) ? MIN_STEP_BRIGHTNESS : -MIN_STEP_BRIGHTNESS;
+  transitionQueueElem_t *pTransition=NULL;
+
+  switch (transitionPreset) {
+    case CLOCK_BASED: /* this is the clock based mode */
+      /* in clock based mode, the more it gets near a set hour,
+        the dimmer the light,
+        the longer the transition */
+      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
+      break;
+
+    case LIGHT_BASED: /* this is the light based mode */
+      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
+      break;  
+
+    case CLOCK_AND_LIGHT_BASED: /*  this is the clock and light based mode */
+      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
+      break;
+
+    default: /* this is the manual mode */
+      pTransition = buildLinearScenario(startingBrightness,targetBrightness, transitionTimeMs);
+    break;
   }
 
   STAILQ_INSERT_TAIL(&(gLedStrip[index].transitionQueue), pTransition, transitionEntry);
 
 #ifdef WEB_DEBUG
-  sprintf(gLogBuffer,"delay step %d, step count %d, brightness step %d",
-    pTransition->stepDelay, pTransition->stepCount, pTransition->stepBrightness);
+  sprintf(gLogBuffer,"Target brightness %d delay step %d, step count %d, brightness step %d",
+    pTransition->targetBrightness, pTransition->stepDelay, pTransition->stepCount, pTransition->stepBrightness);
   addLog(gLogBuffer);
 #endif
 
 #ifdef SERIAL_DEBUG
+  Serial.print("Target brightness ");
+  Serial.print(pTransition->targetBrightness, DEC);
   Serial.print("delay step ");
   Serial.print(pTransition->stepDelay, DEC);
   Serial.print(", step count ");
@@ -778,15 +840,7 @@ bool processJson(char* message, uint8_t index) {
     targetBrightness = 0;
   } // if there is no brightness in the json
 
-
-  // free the data in the queue
-  transitionQueueElem_t *pTransition = NULL;
-  STAILQ_FOREACH(pTransition, &(gLedStrip[index].transitionQueue), transitionEntry) {
-    STAILQ_REMOVE_HEAD(&(gLedStrip[index].transitionQueue), transitionEntry);
-    free(pTransition);
-  }
-  
-  //build and insert the scenario
+  //build and add the scenario
   buildAndInsertScenario(targetBrightness, transitionTimeMs, transitionPreset, index);
 
   return true;
@@ -942,8 +996,11 @@ void loop() {
       setLedStripBrightness(gLedStrip[transitionIndex].currentBrightness, transitionIndex);
       // did we reach the end ?
       if (gpCurrentTransition[transitionIndex]->stepCount == 0) {
-        // yes. Free the transition.
+        // yes. Set the brightness as planned, because sometime rounding error happen
+        gLedStrip[transitionIndex].currentBrightness = gpCurrentTransition[transitionIndex]->targetBrightness;
+        setLedStripBrightness(gLedStrip[transitionIndex].currentBrightness, transitionIndex);                
         Serial.println("Stop Fading");
+        //Free the transition.
         free(gpCurrentTransition[transitionIndex]);
         gpCurrentTransition[transitionIndex] = NULL;
       } else {
