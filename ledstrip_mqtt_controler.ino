@@ -723,64 +723,61 @@ bool processJson(char* message, uint8_t index) {
       targetBrightness = 0;
     }
   } else { // if there is no STATE in the JSON
-    res = root["transition"];
+    res = root["transition"]["timeMs"];
     if (!res) {
-      Serial.println("No transition set");
-      transitionPreset = CLOCK_BASED;
+      addLog("No transition time set");
+      Serial.println("No transition time set");
       transitionTimeMs = MIN_TRANSITION_TIME;
     } else {
-      res = root["transition"]["timeMs"];
-      if (res) {
-        if (root["transition"]["timeMs"] <= MIN_TRANSITION_TIME) {
-          Serial.println("Transition too short, setting to lower limit");
-          transitionTimeMs = MIN_TRANSITION_TIME;
-        } else if (root["transition"]["timeMs"] > MAX_TRANSITION_TIME) {
-          Serial.println("Transition too short high, setting to higher limit");
-          transitionTimeMs = MAX_TRANSITION_TIME;
-        } else {
-          transitionTimeMs = root["transition"]["timeMs"];
-        }
-      } else {
-        Serial.println("Transition time not set, setting to lower limit");
+      if (root["transition"]["timeMs"] <= MIN_TRANSITION_TIME) {
+        Serial.println("Transition too short, setting to lower limit");
+        addLog("transition time too short");
         transitionTimeMs = MIN_TRANSITION_TIME;
-      }
-
-      res = root["transition"]["preset"];
-      if (res) {
-        if (strcmp(root["transition"]["preset"], "CLOCK") == 0) {
-          transitionPreset = CLOCK_BASED;
-          Serial.println("Transition clock based");
-        } else if (strcmp(root["transition"]["preset"], "LIGHT") == 0) {
-          Serial.println("Transition light sensor based");
-          transitionPreset = LIGHT_BASED;
-        } else if (strcmp(root["transition"]["preset"], "AUTO") == 0) {
-          Serial.println("Transition both clock and light sensor based");
-          transitionPreset = CLOCK_AND_LIGHT_BASED;
-        } else {
-          Serial.println("Transition set to manual");
-          transitionPreset = MANUAL;
-        }
+      } else if (root["transition"]["timeMs"] > MAX_TRANSITION_TIME) {
+        Serial.println("Transition too short high, setting to higher limit");
+        transitionTimeMs = MAX_TRANSITION_TIME;
+        addLog("transition too long");
       } else {
-        Serial.println("Transition not specified");
+        addLog("regular transition time found");
+        transitionTimeMs = root["transition"]["timeMs"];
+      }
+    }
+    /* is there a preset ? */
+    res = root["transition"]["preset"];
+    if (res) {
+      if (strcmp(root["transition"]["preset"], "CLOCK") == 0) {
+        transitionPreset = CLOCK_BASED;
+        Serial.println("Transition clock based");
+      } else if (strcmp(root["transition"]["preset"], "LIGHT") == 0) {
+        Serial.println("Transition light sensor based");
+        transitionPreset = LIGHT_BASED;
+      } else if (strcmp(root["transition"]["preset"], "AUTO") == 0) {
+        Serial.println("Transition both clock and light sensor based");
+        transitionPreset = CLOCK_AND_LIGHT_BASED;
+      } else {
+        Serial.println("Transition set to manual");
         transitionPreset = MANUAL;
       }
-    } // if there is transition in the JSON
+    } else {
+      Serial.println("Transition not specified");
+      transitionPreset = MANUAL;
+    }
+  } // if there is transition in the JSON
 
-    res = root["brightness"];
-    if (res) {
-      if (root["brightness"] > MAX_BRIGHTNESS_ALLOWED) {
-        Serial.println("Brightness set too high, limiting");
-        targetBrightness = MAX_BRIGHTNESS_ALLOWED;
-      } else {
-        targetBrightness = root["brightness"];
-      }
-    } else { // if there is brightness in the json
-      // if not specified, root brightness is 0
-      Serial.print("No brightness specified");
-      targetBrightness = 0;
-      Serial.println(" set to 0");
-    } // if there is no brightness in the json
-  }
+  /* is there a brightness directive ? */
+  res = root["brightness"];
+  if (res) {
+    if (root["brightness"] > MAX_BRIGHTNESS_ALLOWED) {
+      Serial.println("Brightness set too high, limiting");
+      targetBrightness = MAX_BRIGHTNESS_ALLOWED;
+    } else {
+      targetBrightness = root["brightness"];
+    }
+  } else { // if there is no brightness, set it to 0
+    Serial.println("No brightness specified, set to 0");
+    targetBrightness = 0;
+  } // if there is no brightness in the json
+
 
   // free the data in the queue
   transitionQueueElem_t *pTransition = NULL;
