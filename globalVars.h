@@ -68,5 +68,7 @@ typedef struct {
 } roomLight_t;
 
 roomLight_t gLedStrip[MAX_ROOM_COUNT];
-
+/**************************************** NTP ************************/
+boolean gSyncEventTriggered = false; // True if a time even has been triggered
+NTPSyncEvent_t gNtpEvent; // Last triggered event
 #endif

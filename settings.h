@@ -2,6 +2,10 @@
 #define _CGE_SETTINGS_EMPTY_H
 
 /* DEFINES */
+/* remove this line to be able to compile. Please do it once 
+ *  mac address is set */
+
+#error configure settings.h before compiling, then remove this line
 
 
 /**************************** OTA **************************************************/
@@ -17,8 +21,9 @@
 #define LOG_BUFFER_SIZE 200
 
 /******************************** DEBUG ********************************************/
-#define WEB_DEBUG false
-#define SERIAL_DEBUG false
+//#define SERIAL_DEBUG true
+#define WEB_DEBUG true
+#define WEBLOG_QUEUE_SIZE 12
 
 /***************************** fade *************************************************/
 #define MAX_ROOM_COUNT 4
@@ -80,16 +85,20 @@ const char gConftimeServer[] = "pool.ntp.org";
 
 
 /****************************** TIME BASED TRANSITION*********************************/
-
-const uint8_t gConfAutoDimStartHour = 22 ; // "time to start dimming" hour. Dimming will start from now.
-const uint8_t gConfHourOfInflexion = 4  ; // "pitch blackest time of your night" hour. The closer to this hour, the dimmer the light.
-const uint8_t gConfAutoDimStopHour = 10 ; // "time to stop dimming" hour. Dimming will be back to normal at that time.
-const uint16_t gConfMaxDimmedBrightness = 300;  // this brightness is achieved at gConfHourOfInflexion
-const uint16_t gConfMaxDimmedTransitionTime = 8000;  // this time will be used at gConfHourOfInflexion
+/* this is the setting to start dimming at 19pm for 4hours, so until 23pm. 
+ * it will then stay the most dim for 8 hours, so until 7am.
+ * finally, it will start lighting more and more for 3 hours, until 10am.
+ * from 10 am to 23 pm, it will work with the max defined lighting values
+ */
+const uint8_t gConfAutoDimStartHour = 19; // "time to start dimming" hour. Dimming will start from now.
+const uint8_t gConfStopLoweringLightOffset = 4; // "pitch blackest time of your night" hour. The closer to this hour, the dimmer the light.
+const uint8_t gConfStartIncreasingLightOffset = 8; // still "pitch blackest time of your night" hour, but from that time, lght will be stronger.
+const uint8_t gConfStopDimmingOffset = 3; // "time to stop dimming" hour. Dimming will be back to normal at that time.
+const uint16_t gConfTargetLowestBrightness = 10;  // this brightness is achieved at gConfStartLowestLightHour
+const uint16_t gConfTargetLongestTransitionTime = 6000;  // this time will be used at gConfStartLowestLightHour
 
 /********************************** WEBSERVER ****************************************/
 #define WEBSERVER_PORT 80
-#define WEBLOG_QUEUE_SIZE 30
 
 const String gRootWebserverMsg =  
 "Any pCommand sets debug mode ON. Dimmer will not process any wifi switch command in debug mode\n"

@@ -1,5 +1,4 @@
-/*
-  The code was first based on @corbanmailloux work ( https://github.com/corbanmailloux/esp-mqtt-rgb-led ), now only the wireless and OTA part remains.
+/* The code was first based on @corbanmailloux work ( https://github.com/corbanmailloux/esp-mqtt-rgb-led ), now only the wireless and OTA part remains.
 
   To use this code you will need the following dependancies:
 
@@ -10,6 +9,8 @@
   - You will also need to download the follow libraries by going to Sketch -> Include Libraries -> Manage Libraries
       - PubSubClient
       - ArduinoJSON
+      - NTPClientLib which uses time.lib.
+      
 */
 
 #include <ArduinoJson.h>
@@ -85,25 +86,31 @@ void scenarioQueueSetup(void) {
     topicSize = strlen (MQTT_PREFIX) + strlen (LUT_IndexToRoomName[index]) + strlen (MQTT_SET) + 3;
     gLedStrip[index].setTopic = (char *)malloc(topicSize);
     sprintf(gLedStrip[index].setTopic, "%s/%s/%s", MQTT_PREFIX, LUT_IndexToRoomName[index], MQTT_SET);
-
+#ifdef SERIAL_DEBUG
     Serial.println(gLedStrip[index].setTopic);
+#endif
   }
 }
 
 void setPowerOutput(void) {
+  #ifdef WEB_DEBUG
   addLog("setPowerOutput");
+  #endif
   digitalWrite(D3, HIGH); // power supply
   delay(20);
   digitalWrite(D1, LOW); // TC4469
 }
 
 void cutPowerOutput(void) {
+  #ifdef WEB_DEBUG
   addLog("cutPowerOutput");
+  #endif
   digitalWrite(D1, HIGH); // TC4469
   delay(20);
   digitalWrite(D3, LOW); // power supply
 }
 
+#ifdef WEB_DEBUG
 /* -------------------------------- DEBUG FUNCTIONS ---------------------------*/
 void addLog(char *pLog) {
   while (gWeblogCount >= WEBLOG_QUEUE_SIZE) {
@@ -134,7 +141,7 @@ void debugSetup(void) {
   STAILQ_INIT(&gLogQueue);
   gWeblogCount = 0;
 }
-
+#endif
 /* -------------------------------- WEBSERVER HANDLERS ------------------------*/
 
 void handleRoot(void) {
@@ -161,8 +168,8 @@ void handlePwm(void) {
   sprintf(gLogBuffer,"Cannot find room %s", pwmName);
   addLog(gLogBuffer);
   gWebServer.send(200, "text/plain", gLogBuffer);
-  return;
 #endif
+  return;
   }
   uint16_t pwmValue = gWebServer.arg(0).toInt();
   if (pwmValue > MAX_PWM_COMMAND) {
@@ -182,9 +189,7 @@ void handlePwm(void) {
   webServerAnswer.concat(" commanded to ");
   webServerAnswer.concat(pwmValue);
   gWebServer.send(200, "text/plain", webServerAnswer.c_str());
-
 }
-
 
 void handlePwm1(void) {
   gDebugMode = true;
@@ -239,9 +244,9 @@ void handleStatus(void) {
   gStatus.concat(digitalRead(D1));
   gStatus.concat("\n Power on demand: ");
   gStatus.concat(digitalRead(D3));
-
+#ifdef WEB_DEBUG
   extractLog(&gStatus);
-  
+#endif
   gWebServer.send(200, "text/plain", gStatus.c_str());
 }
 
@@ -290,6 +295,31 @@ void handleReset (void) {
   ESP.reset();
 }
 
+void processSyncEvent (NTPSyncEvent_t ntpEvent) {
+    if (ntpEvent) {
+#ifdef WEB_DEBUG
+  addLog("Time Sync error: ");
+#endif
+        if (ntpEvent == noResponse) {
+#ifdef WEB_DEBUG
+  addLog("NTP server not reachable");
+#endif
+        } else if (ntpEvent == invalidAddress) {
+#ifdef WEB_DEBUG
+  addLog("Invalid NTP server address");
+#endif
+        }
+    } else {
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"Setting time to  %s and interval to 10mins / 1day",NTP.getTimeDateString(NTP.getLastNTPSync()).c_str());
+  addLog(gLogBuffer);
+#endif
+    // set the system to do a sync every 86400 seconds when succesful, so once a day
+    // if not successful, try syncing every 600s, so every 10 mins
+    NTP.setInterval(600, 86400);
+
+    }
+}
 
 /********************************** START SETUP ****************************************/
 void setup() {
@@ -302,8 +332,9 @@ void setup() {
   Serial.begin(115200);
 
   //debug
+#ifdef WEB_DEBUG
   debugSetup();
-
+#endif
   //wifi not starting fix
   WiFi.mode(WIFI_OFF);
   toggleOnboardLed();
@@ -340,35 +371,23 @@ void setup() {
   else if (gSerialMode) {
     Serial.println("Serial Mode engaged");
   } else {
-
     // wifi setup
     setup_wifi();
 
-    /******************************* NTP management **************************************/
+    /******************************* NTP setup **************************************/
     // NTP and time setup.
     // this one sets the NTP server as gConftimeServer with gmt+1
     // and summer/winter mechanic (true)
     NTP.begin(gConftimeServer, 1, true);
-    // set the system to do a sync every 86400 seconds when succesful, so once a day
-    // if not successful, try syncing every 600s, so every 10 mins
-    NTP.setInterval(600, 86400);
+    // set the interval to 20s at first. On success, change that value 
+    NTP.setInterval(20);
 
-    NTP.onNTPSyncEvent([](NTPSyncEvent_t error) {
-      if (error) {
-        Serial.print("Time Sync error: ");
-        if (error == noResponse) {
-          Serial.println("NTP server not reachable");
-        } else if (error == invalidAddress) {
-          Serial.println("Invalid NTP server address");
-        }
-      } else {
-        setTime(NTP.getLastNTPSync());
-        Serial.print("Setting time to ");
-        Serial.println(NTP.getTimeDateString(NTP.getLastNTPSync()));
-      }
-    });
+    NTP.onNTPSyncEvent ([](NTPSyncEvent_t event) {
+        gNtpEvent = event;
+        gSyncEventTriggered = true;
+        });
 
-    // Webserver setup
+    /*******************************  Webserver setup *********************************/
     gWebServer.on("/", handleRoot);
     gWebServer.on("/pwm",handlePwm);
     gWebServer.on("/pwm1", handlePwm1);
@@ -384,41 +403,56 @@ void setup() {
     gWebServer.on("/status", handleStatus);
     gWebServer.begin();
 
-    // MQTT setup
+/******************************* MQTT setup **********************************/
+#ifdef SERIAL_DEBUG
     Serial.println("Wifi connected, reaching for MQTT server");
+#endif
     gMqttClient.setServer(gConfMqttServerIp, gConfMqttPort);
     gMqttClient.setCallback(lightCommandCallback);
 
-    //OTA setup
+/******************************* OTA setup *********************************/
+
     ArduinoOTA.setPort(OTAPORT);
     ArduinoOTA.setHostname(DEVICENAME);
 
-    // No authentication by default
+    // authentication by default
     ArduinoOTA.setPassword(OTAPASSWORD);
 
     ArduinoOTA.onStart([]() {
+#ifdef SERIAL_DEBUG      
       Serial.println("Starting OTA");
+#endif
       gOtaUpdating = true;
       cutPowerOutput();
     });
+    
     ArduinoOTA.onEnd([]() {
+#ifdef SERIAL_DEBUG
       Serial.println("\nEnd");
+#endif      
     });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+#ifdef SERIAL_DEBUG
       Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+#endif
     });
     ArduinoOTA.onError([](ota_error_t error) {
+#ifdef SERIAL_DEBUG
       Serial.printf("Error[%u]: ", error);
       if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
       else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
       else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
       else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
       else if (error == OTA_END_ERROR) Serial.println("End Failed");
+#endif
     });
+
     ArduinoOTA.begin();
+#ifdef SERIAL_DEBUG    
     Serial.println("Ready");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
+#endif
   }
 }
 
@@ -426,18 +460,17 @@ void setup() {
 /********************************** START SETUP WIFI*****************************************/
 void setup_wifi(void) {
 
-  delay(10);
-  // We start by connecting to a WiFi network
-
 #ifdef SERIAL_DEBUG
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(gConfSsid);
 #endif
 
+  delay(10);
+  // We start by connecting to a WiFi network
   WiFi.mode(WIFI_STA);
   WiFi.begin(gConfSsid, gConfPassword);
-  delay(50);
+  delay(40);
   wl_status_t retCon = WiFi.status() ;
 
   while (retCon != WL_CONNECTED) {
@@ -450,8 +483,8 @@ void setup_wifi(void) {
       case  WL_CONNECT_FAILED: Serial.println(" WL_CONNECT_FAILED (maybe wrong pwd)"); break;
       case  WL_IDLE_STATUS: Serial.println(" WL_IDLE_STATUS"); break;
       default: Serial.println("WL_DISCONNECTED"); break;
-#endif
     }
+#endif
     delay(200);
     toggleOnboardLed();
     retCon = WiFi.status() ;
@@ -581,20 +614,26 @@ void lightCommandCallback(char* topic, byte* payload, unsigned int length) {
 
   token = strtok(NULL, "/");
   if (token == NULL) {
+    #ifdef SERIAL_DEBUG
     Serial.println("wrong MQTT_SET");
+    #endif
     return;
   }
 
   // does it end with MQTT_SET ?
   if (strcmp(token , MQTT_SET) != 0)  {
+    #ifdef SERIAL_DEBUG
     Serial.println("Unknown power suffix");
+    #endif
     return;
   }
 
   // there should not be any data left
   token = strtok(NULL, "/");
   if (token != NULL) {
+    #ifdef SERIAL_DEBUG
     Serial.println("Topic too long");
+    #endif 
     return;
   }
 
@@ -603,10 +642,10 @@ void lightCommandCallback(char* topic, byte* payload, unsigned int length) {
   if (!processJson(message, index)) {
     return;
   }
-
   sendState(index);
 }
 
+/***************************** empty a scenario queue including the playing one ***************************************/
 void emptyScenarioQueue(uint8_t index) {
  // free the data in the queue
   transitionQueueElem_t *pTransition = NULL;
@@ -619,12 +658,24 @@ void emptyScenarioQueue(uint8_t index) {
 /***************************** linear scenario builder *******************************************/
 transitionQueueElem_t * buildLinearScenario (int16_t startingBrightness, int16_t targetBrightness, uint16_t transitionTimeMs) {
 
+
+#ifdef WEB_DEBUG
+   sprintf(gLogBuffer,"linearscenario %d %d %d",
+            startingBrightness, targetBrightness,transitionTimeMs);
+  addLog(gLogBuffer);
+#endif
+
   // we want the max stepCount we can, so it depends wether transition time
   // or brightness count is higher.
   // we might want to set a minimum delay or minimum brightness step
   // so account for that
   transitionQueueElem_t *pTransition = (transitionQueueElem_t *)malloc(sizeof(transitionQueueElem_t));
-
+    if (pTransition == NULL) {
+#ifdef WEB_DEBUG
+  addLog("Transition malloced NULL");      
+#endif
+      return NULL;
+    }
   if ((abs(targetBrightness - startingBrightness) / MIN_STEP_BRIGHTNESS) > (transitionTimeMs / MIN_STEP_DELAY)) {
     //we can do more than 1 brightness step per delay step ms. set stepDelay to that time
     pTransition->stepDelay = MIN_STEP_DELAY;
@@ -640,15 +691,191 @@ transitionQueueElem_t * buildLinearScenario (int16_t startingBrightness, int16_t
   /* whichever, save target brightness in the transition */
   pTransition->targetBrightness = targetBrightness;
 
+#ifdef WEB_DEBUG
+   sprintf(gLogBuffer,"res %d %d %d %u",
+            pTransition->stepDelay, pTransition->stepCount,pTransition->stepBrightness,pTransition->targetBrightness);
+  addLog(gLogBuffer);
+#endif
   return pTransition;
 }
 
+/***************************** decreasing luminosity scenario building ***************************************/
+transitionQueueElem_t * buildDecreaseLuminosityScenario (int16_t startingBrightness, uint16_t timeSinceStart)
+{
+  #ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"decLumScenario start br %d tstart %u",
+           startingBrightness, timeSinceStart);
+  addLog(gLogBuffer);
+  #endif
 
-/****************** scenario builder from JSON *******************************************/
-void buildAndInsertScenario (int16_t targetBrightness, uint16_t transitionTimeMs, uint8_t transitionPreset, uint8_t index) {
+  float timeRatio = timeSinceStart / (gConfStopLoweringLightOffset * 60.0);
+  int32_t tmpTargetBrightness = 0;
+  uint32_t tmpTransitionTimeMs = 0;
+  int16_t  targetBrightness = 0;
+  uint16_t transitionTimeMs = 0;
+  /* this is the increase light scenario. Since we are clock based, 
+  we do not receive target brightness or anything. what we know is if the light was already on
+  we need to turn it off and vice versa */
+  if (startingBrightness == 0)
+  { 
+    tmpTargetBrightness = (1.0 - timeRatio) * (MAX_BRIGHTNESS_ALLOWED - gConfTargetLowestBrightness)  + gConfTargetLowestBrightness;
+    tmpTransitionTimeMs =timeRatio * (gConfTargetLongestTransitionTime - MIN_TRANSITION_TIME)  + MIN_TRANSITION_TIME; ;
+    targetBrightness = (int16_t)tmpTargetBrightness;
+    transitionTimeMs = (uint16_t)tmpTransitionTimeMs;
+  } else {
+    tmpTransitionTimeMs =(1.0 - timeRatio) * (gConfTargetLongestTransitionTime - MIN_TRANSITION_TIME)  + MIN_TRANSITION_TIME; ;
+    targetBrightness = 0;
+    transitionTimeMs = (uint16_t)tmpTransitionTimeMs;
+  }
+  
+  if (startingBrightness == tmpTargetBrightness) {
+  #ifdef WEB_DEBUG
+    addLog("brightnesses are the same, change nothing");
+  #endif
+      return NULL;    
+    }
 
 #ifdef WEB_DEBUG
-  sprintf(gLogBuffer,"scenario: brightness from %d to %d transition time %d preset %d room index %d",
+  sprintf(gLogBuffer,"decLumScenario start br %d target br %d transition time %u",
+           startingBrightness, targetBrightness, transitionTimeMs);
+  addLog(gLogBuffer);
+#endif
+  return buildLinearScenario (startingBrightness, targetBrightness,  transitionTimeMs);}
+
+/***************************** increasing luminosity scenario building ***************************************/
+transitionQueueElem_t * buildIncreaseLuminosityScenario (int16_t startingBrightness, uint16_t timeSinceStart)
+{
+  #ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"incLumScenario start br %d tstart %u",
+           startingBrightness, timeSinceStart);
+  addLog(gLogBuffer);
+  #endif
+
+  float timeRatio = timeSinceStart / (gConfStopDimmingOffset * 60.0);
+  int32_t tmpTargetBrightness = 0;
+  uint32_t tmpTransitionTimeMs = 0;
+  int16_t  targetBrightness = 0;
+  uint16_t transitionTimeMs = 0;
+  /* this is the increase light scenario. Since we are clock based, 
+  we do not receive target brightness or anything. what we know is if the light was already on
+  we need to turn it off and vice versa */
+  if (startingBrightness == 0)
+  { 
+    tmpTargetBrightness = (timeRatio * (MAX_BRIGHTNESS_ALLOWED - gConfTargetLowestBrightness))  + gConfTargetLowestBrightness;
+    tmpTransitionTimeMs =(1.0 - timeRatio) * (gConfTargetLongestTransitionTime - MIN_TRANSITION_TIME)  + MIN_TRANSITION_TIME; ;
+    targetBrightness = (int16_t)tmpTargetBrightness;
+    transitionTimeMs = (uint16_t)tmpTransitionTimeMs;
+  } else {
+    tmpTransitionTimeMs =(1.0 - timeRatio) * (gConfTargetLongestTransitionTime - MIN_TRANSITION_TIME)  + MIN_TRANSITION_TIME; ;
+    targetBrightness = 0;
+    transitionTimeMs = (uint16_t)tmpTransitionTimeMs;
+  }
+  
+  if (startingBrightness == tmpTargetBrightness) {
+  #ifdef WEB_DEBUG
+    addLog("brightnesses are the same, change nothing");
+  #endif
+      return NULL;    
+    }
+
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"incLumScenario start br %d target br %d transition time %u",
+           startingBrightness, targetBrightness, transitionTimeMs);
+  addLog(gLogBuffer);
+#endif
+  return buildLinearScenario (startingBrightness, targetBrightness,  transitionTimeMs);
+}
+
+/***************************** time interval detection ***************************************/
+
+uint16_t MinutesSinceStartOfInterval(uint8_t currentHour, uint8_t currentMinute, uint8_t startHour, uint8_t intervalSize)
+{
+  uint16_t timeSinceStart = 0;  
+
+  if (startHour + intervalSize > 23 )  {
+    /* the interval includes 0 */
+    if ((currentHour >= startHour) && (currentHour < 0)) {
+      /* first part of the clock */
+      timeSinceStart =  ((currentHour - startHour ) * 60) + currentMinute;
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"%d:%d between %d and 0h. interval %d tStart %d",
+      currentHour,currentMinute,startHour,intervalSize,timeSinceStart);
+  addLog(gLogBuffer);
+#endif
+    } else if ((currentHour >=0) && (currentHour < (startHour + intervalSize - 24))) {
+      /* second part of the clock */
+      timeSinceStart =  ((24 + currentHour - startHour  ) * 60) + currentMinute;
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"%d:%d between 0h and max time. interval %d tStart %d",
+      currentHour,currentMinute,startHour,intervalSize,timeSinceStart);
+  addLog(gLogBuffer);
+#endif
+    } else {
+      /* not in the interval, do nothing */
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"%d:%d not in the interval",currentHour,currentMinute);
+  addLog(gLogBuffer);
+#endif
+    }
+  } else if ((currentHour>=startHour) && (currentHour < (startHour + intervalSize))) {
+  /* the interval does not include 0 */
+  timeSinceStart =  ((currentHour - startHour ) * 60) + currentMinute;
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"%d:%d is between %d and interval %d. tStart %d",
+      currentHour,currentMinute,startHour,intervalSize,timeSinceStart);
+  addLog(gLogBuffer);
+#endif
+  } else {
+    /* out of interval, value is 0 so do nothing */
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"%d:%d not in the interval",currentHour,currentMinute);
+  addLog(gLogBuffer);
+#endif
+  }
+  return timeSinceStart;
+}
+
+/****************** accessor *******************************************/
+transitionQueueElem_t *getScenarioStart(uint8_t index, int16_t *startingBrightness)
+{
+  transitionQueueElem_t *pBaseState = NULL;
+    if (!STAILQ_EMPTY(&(gLedStrip[index].transitionQueue))) {
+    /* yes, load the last inserted as reference */
+    // does not work right now, missing implementation of __offsetof in arduino core 3.2.0
+    // workaround since i know the structure size
+#define  MY_STAILQ_LAST(head, type)          \
+    (STAILQ_EMPTY((head)) ?           \
+     NULL :             \
+     ((struct type *)(void *)       \
+((char *)((head)->stqh_last) - 8)))
+    
+    pBaseState = MY_STAILQ_LAST(&(gLedStrip[index].transitionQueue),transitionQueueElem_s);
+    
+    *startingBrightness = pBaseState->targetBrightness;
+  } else if (gpCurrentTransition[index] != NULL) {
+      /* yes, use the current playing scenario target */
+     pBaseState = gpCurrentTransition[index];
+     *startingBrightness = pBaseState->targetBrightness;
+  } else {
+    /* nothing playing. Use current */
+    *startingBrightness = gLedStrip[index].currentBrightness;
+  }
+  
+  /* clear any remaining or playing transition */
+  if (gpCurrentTransition[index] != NULL) {
+    free (gpCurrentTransition[index]);
+    gpCurrentTransition[index] = NULL;
+  }
+  emptyScenarioQueue(index);
+
+}
+
+/****************** scenario builder from JSON *******************************************/
+void buildAndInsertScenario (int16_t targetBrightness, uint16_t transitionTimeMs, uint8_t transitionPreset, uint8_t index)
+{
+
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"scenario: br from %d to %d tr time %d preset %d room index %d",
       gLedStrip[index].currentBrightness, targetBrightness, transitionTimeMs,transitionPreset, index);
   addLog(gLogBuffer);
 #endif
@@ -670,87 +897,109 @@ void buildAndInsertScenario (int16_t targetBrightness, uint16_t transitionTimeMs
    *  If there is none either, use the current state
    */
   int16_t startingBrightness = 0;
-  transitionQueueElem_t *pBaseState = NULL;
-  if (!STAILQ_EMPTY(&(gLedStrip[index].transitionQueue))) {
-    /* yes, load the last inserted as reference */
-    // does not work right now, missing implementation of __offsetof in arduino core 3.2.0
-    // workaround since i know the structure size
-#define  MY_STAILQ_LAST(head, type)          \
-    (STAILQ_EMPTY((head)) ?           \
-     NULL :             \
-     ((struct type *)(void *)       \
-((char *)((head)->stqh_last) - 8)))
-    
-    pBaseState = MY_STAILQ_LAST(&(gLedStrip[index].transitionQueue),transitionQueueElem_s);
-    
-    startingBrightness = pBaseState->targetBrightness;
-  } else if (gpCurrentTransition[index] != NULL) {
-      /* yes, use the current playing scenario target */
-     pBaseState = gpCurrentTransition[index];
-     startingBrightness = pBaseState->targetBrightness;
-  } else {
-    /* nothing playing. Use current */
-    startingBrightness = gLedStrip[index].currentBrightness;
-  }
-  
-   /* check if there is a transition to do */
+  transitionQueueElem_t *pBaseState = getScenarioStart(index, &startingBrightness);
+
+  /* check if there is a transition to do */
   if (targetBrightness == startingBrightness) {
   /* none ! So do nothing */
-     return;
+#ifdef WEB_DEBUG
+  sprintf(gLogBuffer,"Target brightness = starting brightness, no scenario");
+  addLog(gLogBuffer);
+#endif
+     return ;
   }
-    
-  /* clear any remaining or playing transition */
-  if (gpCurrentTransition[index] != NULL) {
-    free (gpCurrentTransition[index]);
-    gpCurrentTransition[index] = NULL;
-  }
-  emptyScenarioQueue(index);
-
-  /* TODO */
-  /* right now the preset is not used. Code it when time and light sensor is available */
-
   transitionQueueElem_t *pTransition=NULL;
-
-  switch (transitionPreset) {
-    case CLOCK_BASED: /* this is the clock based mode */
+  
+   if (transitionPreset == CLOCK_BASED) {
+     /* this is the clock based mode */
       /* in clock based mode, the more it gets near a set hour,
         the dimmer the light,
         the longer the transition */
-      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
-      break;
-
-    case LIGHT_BASED: /* this is the light based mode */
-      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
-      break;  
-
-    case CLOCK_AND_LIGHT_BASED: /*  this is the clock and light based mode */
-      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
-      break;
-
-    default: /* this is the manual mode */
-      pTransition = buildLinearScenario(startingBrightness,targetBrightness, transitionTimeMs);
-    break;
-  }
-
-  STAILQ_INSERT_TAIL(&(gLedStrip[index].transitionQueue), pTransition, transitionEntry);
-
+        
+      uint8_t currentHour = hour();
+      uint8_t currentMinute = minute();
+  
+  #ifdef WEB_DEBUG
+    sprintf(gLogBuffer,"CLOCK_BASED: currentHour %d currentMinute %d",
+        currentHour, currentMinute);
+    addLog(gLogBuffer);
+  #endif
+      /* time sections are like this:
+       *  gConfAutoDimStartHour | gConfStopLoweringLightOffset | gConfStartIncreasingLightOffset | gConfStopDimmingOffset
+       *  basically, the light output will do this:  \_______/
+       *  
+       *  the starting point of dimming is the first variable
+       *  the starting point of lowest light is first variable + the second
+       *  the starting point of less dimming is first variable + the second + the third
+       *  and we go back to standard dimming when time reached the first variable + second + third + fourth
+       *  
+       *  working with offset is way simpler in terms of rollover.
+       */
+      uint16_t timeSinceInterval =  MinutesSinceStartOfInterval(currentHour, currentMinute, 
+                                                                gConfAutoDimStartHour, gConfStopLoweringLightOffset);
+  
+      if (timeSinceInterval > 0 ) {
+          pTransition = buildDecreaseLuminosityScenario(startingBrightness, timeSinceInterval); 
+      } else {
+        timeSinceInterval =  MinutesSinceStartOfInterval(currentHour, currentMinute, 
+                                                        (gConfAutoDimStartHour + gConfStopLoweringLightOffset) % 24,
+                                                        gConfStartIncreasingLightOffset);
+        if (timeSinceInterval > 0 ) {
+        /* this is the darkest light scenario.
+        Buid the scenario with the lowest values */
+          pTransition = buildLinearScenario(startingBrightness, gConfTargetLowestBrightness, gConfTargetLongestTransitionTime);           
+        } else {
+          timeSinceInterval =  MinutesSinceStartOfInterval(currentHour, currentMinute, 
+                                                          (gConfAutoDimStartHour + gConfStopLoweringLightOffset + gConfStopLoweringLightOffset) % 24,
+                                                          gConfStopDimmingOffset);
+          if (timeSinceInterval > 0)  {
+            /* this is the increasing light scenario */
 #ifdef WEB_DEBUG
-  sprintf(gLogBuffer,"Target brightness %d delay step %d, step count %d, brightness step %d",
-    pTransition->targetBrightness, pTransition->stepDelay, pTransition->stepCount, pTransition->stepBrightness);
-  addLog(gLogBuffer);
-#endif
-
-#ifdef SERIAL_DEBUG
-  Serial.print("Target brightness ");
-  Serial.print(pTransition->targetBrightness, DEC);
-  Serial.print("delay step ");
-  Serial.print(pTransition->stepDelay, DEC);
-  Serial.print(", step count ");
-  Serial.print(pTransition->stepCount, DEC);
-  Serial.print(", brightness step ");
-  Serial.println(pTransition->stepBrightness, DEC);
-#endif
-
+    sprintf(gLogBuffer,"buildIncreaseLuminosityScenario: timeSinceInterval %d",
+        timeSinceInterval);
+    addLog(gLogBuffer);
+#endif             
+             pTransition = buildIncreaseLuminosityScenario(startingBrightness, timeSinceInterval);
+          } else  {
+          /* nothing special is happening. This is "no dimming" time, build linear scenario */
+          pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
+        }
+      }
+      }
+// TODO : code these modes, if ever 
+//   } else if (transitionPreset == LIGHT_BASED) {
+//   /* this is the light based mode */
+//      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
+//   } else if (transitionPreset == CLOCK_AND_LIGHT_BASED) {
+//   /*  this is the clock and light based mode */
+//      pTransition = buildLinearScenario(startingBrightness, targetBrightness, transitionTimeMs);
+   } else {
+  /* this is the manual mode */
+     pTransition = buildLinearScenario(startingBrightness,targetBrightness, transitionTimeMs);
+  }
+  
+  if (pTransition!=NULL){
+    STAILQ_INSERT_TAIL(&(gLedStrip[index].transitionQueue), pTransition, transitionEntry);
+    #ifdef SERIAL_DEBUG
+    Serial.print("Target brightness ");
+    Serial.print(pTransition->targetBrightness, DEC);
+    Serial.print("delay step ");
+    Serial.print(pTransition->stepDelay, DEC);
+    Serial.print(", step count ");
+    Serial.print(pTransition->stepCount, DEC);
+    Serial.print(", brightness step ");
+    Serial.println(pTransition->stepBrightness, DEC);
+    #endif
+    #ifdef WEB_DEBUG
+    sprintf(gLogBuffer,"Target brightness %d delay step %d, step count %d, brightness step %d",
+      pTransition->targetBrightness, pTransition->stepDelay, pTransition->stepCount, pTransition->stepBrightness);
+    addLog(gLogBuffer);
+    #endif
+  } else {
+  #ifdef WEB_DEBUG
+    addLog("Transition NULL");
+  #endif
+  }
 }
 
 /********************************** JSON PROCESSOR *****************************************/
@@ -776,31 +1025,50 @@ bool processJson(char* message, uint8_t index) {
   const char* res = root["state"];
   if (res) {
     if (strcmp(root["state"], gConfOnCommand) == 0 ) {
+#ifdef SERIAL_DEBUG      
       Serial.println("State set ON");
+#endif      
       targetBrightness = MAX_BRIGHTNESS_ALLOWED;
       transitionPreset = CLOCK_BASED;
     } else {
+#ifdef SERIAL_DEBUG            
       Serial.println("State set and not ON, setting as OFF");
+#endif
       transitionPreset = CLOCK_BASED;
       targetBrightness = 0;
     }
   } else { // if there is no STATE in the JSON
     res = root["transition"]["timeMs"];
     if (!res) {
+#ifdef WEB_DEBUG
       addLog("No transition time set");
+#endif
+#ifdef SERIAL_DEBUG      
       Serial.println("No transition time set");
+#endif
       transitionTimeMs = MIN_TRANSITION_TIME;
     } else {
       if (root["transition"]["timeMs"] <= MIN_TRANSITION_TIME) {
+#ifdef SERIAL_DEBUG      
         Serial.println("Transition too short, setting to lower limit");
+#endif        
+#ifdef WEB_DEBUG        
         addLog("transition time too short");
+#endif        
         transitionTimeMs = MIN_TRANSITION_TIME;
       } else if (root["transition"]["timeMs"] > MAX_TRANSITION_TIME) {
+#ifdef SERIAL_DEBUG      
         Serial.println("Transition too short high, setting to higher limit");
+#endif
+#ifdef WEB_DEBUG        
+          addLog("transition too long");
+#endif
         transitionTimeMs = MAX_TRANSITION_TIME;
-        addLog("transition too long");
+      
       } else {
+#ifdef WEB_DEBUG   
         addLog("regular transition time found");
+#endif        
         transitionTimeMs = root["transition"]["timeMs"];
       }
     }
@@ -809,19 +1077,29 @@ bool processJson(char* message, uint8_t index) {
     if (res) {
       if (strcmp(root["transition"]["preset"], "CLOCK") == 0) {
         transitionPreset = CLOCK_BASED;
+#ifdef SERIAL_DEBUG              
         Serial.println("Transition clock based");
+#endif
       } else if (strcmp(root["transition"]["preset"], "LIGHT") == 0) {
+#ifdef SERIAL_DEBUG      
         Serial.println("Transition light sensor based");
+#endif        
         transitionPreset = LIGHT_BASED;
       } else if (strcmp(root["transition"]["preset"], "AUTO") == 0) {
+#ifdef SERIAL_DEBUG      
         Serial.println("Transition both clock and light sensor based");
+#endif        
         transitionPreset = CLOCK_AND_LIGHT_BASED;
       } else {
+#ifdef SERIAL_DEBUG              
         Serial.println("Transition set to manual");
+#endif     
         transitionPreset = MANUAL;
       }
     } else {
+#ifdef SERIAL_DEBUG            
       Serial.println("Transition not specified");
+#endif
       transitionPreset = MANUAL;
     }
   } // if there is transition in the JSON
@@ -830,22 +1108,30 @@ bool processJson(char* message, uint8_t index) {
   res = root["brightness"];
   if (res) {
     if (root["brightness"] > MAX_BRIGHTNESS_ALLOWED) {
+#ifdef SERIAL_DEBUG      
       Serial.println("Brightness set too high, limiting");
+#endif
       targetBrightness = MAX_BRIGHTNESS_ALLOWED;
     } else {
       targetBrightness = root["brightness"];
     }
   } else { // if there is no brightness, set it to 0
+#ifdef SERIAL_DEBUG      
     Serial.println("No brightness specified, set to 0");
-    targetBrightness = 0;
+#endif
+targetBrightness = 0;
   } // if there is no brightness in the json
 
   //build and add the scenario
-  buildAndInsertScenario(targetBrightness, transitionTimeMs, transitionPreset, index);
 
-  return true;
+//  if (!gclockswitch) {
+    buildAndInsertScenario(targetBrightness, transitionTimeMs, CLOCK_BASED, index);
+//    gclockswitch = true;
+//  } else {
+//    buildAndInsertScenario(targetBrightness, transitionTimeMs, transitionPreset, index);
+//  }
+return true;
 }
-
 
 /********************************** START SEND STATE*****************************************/
 void sendState(uint8_t index) {
@@ -854,6 +1140,7 @@ void sendState(uint8_t index) {
   JsonObject& root = jsonBuffer.createObject();
   root["CurrentBrightness"] = gLedStrip[index].currentBrightness;
   if (gpCurrentTransition[index] != NULL) {
+    root["transition][targetBrightness"] = gpCurrentTransition[index]->targetBrightness;
     root["transition][stepBrightness"] = gpCurrentTransition[index]->stepBrightness;
     root["transition][stepDelay"] = gpCurrentTransition[index]->stepDelay;
     root["transition][stepCount"] = gpCurrentTransition[index]->stepCount;
@@ -869,11 +1156,14 @@ void sendState(uint8_t index) {
 void reconnectMqtt() {
   // Loop until we're reconnected
   while (!gMqttClient.connected()) {
+#ifdef SERIAL_DEBUG
     Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
+#endif
+// Attempt to connect
     if (gMqttClient.connect(DEVICENAME, gConfMqttUsername, gConfMqttPassword)) {
+#ifdef SERIAL_DEBUG
       Serial.println("connected");
-
+#endif
       /* subscribe to the MAX_ROOM_COUNT set topics */
       uint8_t index = 0;
       for (index = 0; index < MAX_ROOM_COUNT; index++) {
@@ -881,9 +1171,11 @@ void reconnectMqtt() {
         sendState(index);
       }
     } else {
+#ifdef SERIAL_DEBUG      
       Serial.print("failed, rc=");
       Serial.print(gMqttClient.state());
       Serial.println(" try again in 5 seconds");
+#endif      
       // Wait 5 seconds before retrying
       delay(5000);
     }
@@ -955,7 +1247,9 @@ void loop() {
 
     if (WiFi.status() != WL_CONNECTED) {
       delay(1);
+#ifdef SERIAL_DEBUG      
       Serial.print("WIFI Disconnected. Attempting reconnection.");
+#endif      
       setup_wifi();
       return;
     }
@@ -966,13 +1260,20 @@ void loop() {
     gWebServer.handleClient();
   }
 
+  /* process time only if no OTA is going on */
+  if ((!gOtaUpdating) && gSyncEventTriggered) {
+      processSyncEvent (gNtpEvent);
+      gSyncEventTriggered = false;
+  }
+  
 
   /* we do not want to process anything in debug or OTA mode */
   if (gDebugMode || gOtaUpdating) {
     delay(50);
     return;
   }
-  
+
+
   // are we processing a transition ?
   uint8_t transitionIndex = 0;
   gPowerNeeded = false;
@@ -999,7 +1300,9 @@ void loop() {
         // yes. Set the brightness as planned, because sometime rounding error happen
         gLedStrip[transitionIndex].currentBrightness = gpCurrentTransition[transitionIndex]->targetBrightness;
         setLedStripBrightness(gLedStrip[transitionIndex].currentBrightness, transitionIndex);                
+#ifdef SERIAL_DEBUG
         Serial.println("Stop Fading");
+#endif
         //Free the transition.
         free(gpCurrentTransition[transitionIndex]);
         gpCurrentTransition[transitionIndex] = NULL;
